@@ -7,8 +7,8 @@ global_settings:
 dataset:
   file:
     # full path or relative path from the root of the project
-    data_path: "/Users/kenyasakka/sandbox/Qyusu/astronaut-private/data/datasets/mnist/X_train.npy"
-    label_path: "/Users/kenyasakka/sandbox/Qyusu/astronaut-private/data/datasets/mnist/y_train.npy"
+    data_path: "data/datasets/mnist/X_train.npy"
+    label_path: "data/datasets/mnist/y_train.npy"
     label_name: null
   split:
     train_ratio: 0.6
