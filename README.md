@@ -6,7 +6,7 @@
 </div>
 
 <p align="center">
-  This repository contains the official implementation of the paper <a href="https://github.com/Qyusu/astronaut" target="_blank"><em>"Automating quantum feature map design via large language models"</em></a>.
+  This repository contains the official implementation of the paper <a href="https://arxiv.org/abs/2504.07396" target="_blank"><em>"Automating quantum feature map design via large language models"</em></a>.
   The system proposed in the paper, named <strong>"Astronaut"</strong>, autonomously generates quantum circuits using an iterative improvement process powered by LLMs. It currently specializes in designing quantum feature maps for machine learning models that rely on kernel methods, such as support vector machines, and is composed of the below architecture.
 </p>
 
