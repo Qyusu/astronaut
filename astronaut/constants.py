@@ -4,12 +4,15 @@ MODULE_HOME: Path = Path(__file__).resolve().parents[1]
 MODULE_SRC: Path = Path(__file__).resolve().parents[0]
 CURRENT_WORKING_DIR: Path = Path.cwd()
 
+MODEL_TYPE_PLACEHOLDER = "--MODEL_TYPE_PLACEHOLDER--"
+QKERNEL_MODEL_TYPE = "quantum_kernel"
+
 CONFIG_DIRC = f"{MODULE_HOME}/configs"
 PAPER_PDF_DIRC = f"{MODULE_HOME}/data/papers"
-BASE_CONFIG_PATH = f"{CONFIG_DIRC}/base/astronaut.yaml"
-DRYRUN_CONFIG_PATH = f"{CONFIG_DIRC}/base/dry_run.yaml"
+BASE_CONFIG_PATH = f"{CONFIG_DIRC}/base/{MODEL_TYPE_PLACEHOLDER}/astronaut.yaml"
+DRYRUN_CONFIG_PATH = f"{CONFIG_DIRC}/base/{MODEL_TYPE_PLACEHOLDER}/dry_run.yaml"
 GENERATED_CONFIG_DIRC = f"{CONFIG_DIRC}/generated"
-SEED_CODE_PATH = f"{MODULE_SRC}/seed/feature_map.py"
+QKERNEL_SEED_CODE_PATH = f"{MODULE_SRC}/seed/{QKERNEL_MODEL_TYPE}/feature_map.py"
 GENERATED_CODE_DIRC = f"{MODULE_SRC}/generated"
 GENERATED_MODULE_ROOT = "astronaut.generated"
 
@@ -29,7 +32,6 @@ DEFAULT_MAX_SUGGESTION_NUM = 3
 DEFAULT_MAX_REFLECTION_ROUND = 3
 
 # OpenAI Model Series
-STABLE_REASONING_MODEL_VERSIONS = ["o3-mini-2025-01-31", "o1-pro-2025-03-19", "o1-2024-12-17"]
 REASONING_SERIES = [
     "o1-mini",
     "o1-mini-2024-09-12",
@@ -40,6 +42,10 @@ REASONING_SERIES = [
     "o1-pro-2025-03-19",
     "o3-mini",
     "o3-mini-2025-01-31",
+    "o3",
+    "o3-2025-04-16",
+    "o4-mini",
+    "o4-mini-2025-04-16",
 ]
 
 GPT_SERIES = [
@@ -49,6 +55,12 @@ GPT_SERIES = [
     "gpt-4o-2024-11-20",
     "gpt-4.5-preview",
     "gpt-4.5-preview-2025-02-27",
+    "gpt-4.1-nano",
+    "gpt-4.1-nano-2025-04-14",
+    "gpt-4.1-mini",
+    "gpt-4.1-mini-2025-04-14",
+    "gpt-4.1",
+    "gpt-4.1-2025-04-14",
 ]
 
 REASONING_MAX_TOKENS = 100000
@@ -63,3 +75,4 @@ PENNYLANE_VERSION = "0.39.0"
 
 # Special Strings
 COMPLETED = "COMPLETED"
+NOT_PROVIDED_INFORMATION = "NOT PROVIDED"

@@ -61,9 +61,12 @@ class ArxivPaperDB:
             api_key=settings.OPENAI_API_KEY if settings.EMBEDDING_PLATFORM == "openai" else "",
             embeddings_model_version=settings.EMBEDDING_MODEL_VERSION,
         )
-        self.db = PineconeClient(
-            api_key=settings.PINECONE_API_KEY, index_name=self.index_name, embed_client=self.client
-        )
+        if settings.PINECONE_API_KEY is not None:
+            self.db = PineconeClient(
+                api_key=settings.PINECONE_API_KEY, index_name=self.index_name, embed_client=self.client
+            )
+        else:
+            raise ValueError("PINECONE_API_KEY is not set.")
 
     def setup(self) -> None:
         if self.init_db:
@@ -75,7 +78,7 @@ class ArxivPaperDB:
         )
 
     def get_all_paper_in_date_range(
-        self, query: str, category: Optional[str], start_date: str, end_date: str
+        self, query: str, category: str | None, start_date: str, end_date: str
     ) -> list[AcademicPaper]:
         paper_list = []
         current_idx = 0
@@ -129,49 +132,63 @@ class ArxivPaperDB:
         return new_date_obj.strftime("%Y%m%d")
 
     def upsert_paper(
-        self, category: Optional[str], query: str, start_date: str, end_date: str, delta_days: int = 30
+        self, category: str | None, keywords: list[str], start_date: str, end_date: str, delta_days: int = 30
     ) -> None:
-        next_start_date = start_date
-        next_end_date = self.add_days(start_date, delta_days)
         total_paper_num = 0
-        while True:
-            papers = self.get_all_paper_in_date_range(
-                query=query, category=category, start_date=next_start_date, end_date=next_end_date
-            )
-            for paper in papers:
-                try:
-                    text = self.download_pdf_to_text(paper.pdf_url, f"{PAPER_PDF_DIRC}/arxiv/{paper.id}.pdf")
-                    self.db.upsert(
-                        document_id=paper.id,
-                        text=text,
-                        chunk_size=self.chunk_size,
-                        metadata={
-                            "document_id": paper.id,
-                            "pdf_url": paper.pdf_url,
-                            "abstract": paper.abstract,
-                            "published_date": paper.published_date,
-                        },
-                        chunk_method="sentence",
-                        allow_update=False,
-                    )
-                except Exception as e:
-                    logger.error(f"Failed to upsert paper: {paper.id}. Skipped this file. Error: {e}")
+        keyword_paper_counts = {keyword: 0 for keyword in keywords}
 
-            total_paper_num += len(papers)
+        for keyword in keywords:
+            # reset dates for each keyword
+            next_start_date = start_date
+            next_end_date = self.add_days(start_date, delta_days)
+            while True:
+                papers = self.get_all_paper_in_date_range(
+                    query=keyword, category=category, start_date=next_start_date, end_date=next_end_date
+                )
+                for paper in papers:
+                    try:
+                        text = self.download_pdf_to_text(
+                            paper.pdf_url, f"{PAPER_PDF_DIRC}/{self.index_name}/{paper.id}.pdf"
+                        )
+                        self.db.upsert(
+                            document_id=paper.id,
+                            text=text,
+                            chunk_size=self.chunk_size,
+                            metadata={
+                                "document_id": paper.id,
+                                "pdf_url": paper.pdf_url,
+                                "abstract": paper.abstract,
+                                "published_date": paper.published_date,
+                                "keyword": keyword,
+                            },
+                            chunk_method="size",
+                            allow_update=False,
+                        )
+                    except Exception as e:
+                        logger.error(f"Failed to upsert paper: {paper.id}. Skipped this file. Error: {e}")
 
-            logger.info(
-                f"Upserted papers from {next_start_date} to {next_end_date}. "
-                f"Total number of papers: {total_paper_num}"
-            )
-            next_start_date = next_end_date
-            next_end_date = self.add_days(next_start_date, delta_days)
+                keyword_paper_counts[keyword] += len(papers)
+                total_paper_num += len(papers)
 
-            if end_date < next_start_date:
-                # all papers are fetched
-                break
+                logger.info(
+                    f"Upserted papers for keyword '{keyword}' from {next_start_date} to {next_end_date}. "
+                    f"Papers for this keyword: {keyword_paper_counts[keyword]}, Total papers: {total_paper_num}"
+                )
+
+                next_start_date = next_end_date
+                next_end_date = self.add_days(next_start_date, delta_days)
+
+                if end_date < next_start_date:
+                    # all papers are fetched for this keyword
+                    break
+
+        # Print summary for each keyword
+        logger.info("\nSummary of papers by keyword:")
+        for keyword, count in keyword_paper_counts.items():
+            logger.info(f"'{keyword}': {count} papers")
 
         logger.info(
-            f"Done upserting papers from arXiv. Total number of papers: {total_paper_num}. "
+            f"\nDone upserting papers from arXiv. Total number of papers: {total_paper_num}."
             f"Total cost: ${self.db.total_cost:.2f}"
         )
 
@@ -184,7 +201,12 @@ class ArxivPaperDB:
 @click.option("--init_db", type=bool, default=False, required=False, help="Initialize the database.")
 @click.option("--category", type=str, default=None, required=False, help="The category of the arXiv paper.")
 @click.option(
-    "--keyword", type=str, default="Quantum Machine Learning", required=False, help="The keywords of the arXiv paper."
+    "--keywords",
+    type=str,
+    default="Quantum Machine Learning",
+    required=False,
+    help="The keywords of the arXiv paper. Multiple keywords can be specified with comma separation.",
+    callback=lambda ctx, param, value: [k.strip() for k in value.split(",")],
 )
 @click.option(
     "--date_range",
@@ -197,10 +219,13 @@ def setup_arxiv_db(
     chunk_size: int,
     max_results_per_request: int,
     init_db: bool,
-    category: Optional[str],
-    keyword: str,
+    category: str | None,
+    keywords: list[str],
     date_range: str,
 ) -> None:
+    if settings.ARXIV_INDEX_NAME is None:
+        raise ValueError("ARXIV_INDEX_NAME is not set.")
+
     start_date, end_date = date_range.split("-")
     arxiv_db = ArxivPaperDB(
         index_name=settings.ARXIV_INDEX_NAME,
@@ -209,7 +234,7 @@ def setup_arxiv_db(
         init_db=init_db,
     )
     arxiv_db.setup()
-    arxiv_db.upsert_paper(category=category, query=keyword, start_date=start_date, end_date=end_date)
+    arxiv_db.upsert_paper(category=category, keywords=keywords, start_date=start_date, end_date=end_date)
 
 
 if __name__ == "__main__":

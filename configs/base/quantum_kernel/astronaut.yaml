@@ -1,0 +1,63 @@
+description: "This is base settings for Astronaut experiment."
+
+global_settings:
+  random_seed: &global_seed 42
+  model_type: "qkernel"
+  task_type: "classification"
+
+dataset:
+  file:
+    # full path or relative path from the root of the project
+    data_path: "data/datasets/mnist/X_train.npy"
+    label_path: "data/datasets/mnist/y_train.npy"
+    label_name: null
+  split:
+    train_ratio: 0.6
+    validation_ratio: 0.2
+    test_ratio: 0.2
+    shuffle: true
+  features: null
+  raw_preprocess_logic:
+    module_name: "qxmt.datasets.raw_preprocess.sampling"
+    implement_name: "sampling_by_each_class"
+    params:
+      n_samples: 10000
+      labels: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+      random_seed: *global_seed
+  transform_logic:
+    module_name: "qxmt.datasets.transform.reducer"
+    implement_name: "dimension_reduction_by_pca"
+    params:
+      n_components: 80
+      random_seed: *global_seed
+      normalize: true
+
+device:
+  platform: "pennylane"
+  device_name: "lightning.qubit"
+  n_qubits: 10
+  shots: null
+
+feature_map:
+  module_name: "astronaut.seed.quantum_kernel.feature_map"
+  implement_name: "SeedFeatureMap"
+  params: {}
+
+kernel:
+  module_name: "qxmt.kernels.pennylane"
+  implement_name: "FidelityKernel"
+  params: {}
+
+model:
+  name: "qsvc"
+  params:
+    C: 1.0
+    gamma:  "scale"
+
+evaluation:
+  default_metrics:
+  - "accuracy"
+  - "precision"
+  - "recall"
+  - "f1_score"
+  custom_metrics: []

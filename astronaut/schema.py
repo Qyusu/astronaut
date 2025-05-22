@@ -1,6 +1,6 @@
 import json
 from textwrap import dedent
-from typing import Any, Optional, Type, TypeAlias
+from typing import Any, Type, TypeAlias
 
 import pandas as pd
 from anthropic.types import MessageParam
@@ -78,9 +78,9 @@ class MessageHistory(BaseModel):
 
 
 class MessageHistoryNum(BaseModel):
-    review: Optional[int] = Field(default=None, description="Maximum number of message history for review.")
-    idea: Optional[int] = Field(default=None, description="Maximum number of message history for idea.")
-    code: Optional[int] = Field(default=1, description="Maximum number of message history for code.")
+    review: int | None = Field(default=None, description="Maximum number of message history for review.")
+    idea: int | None = Field(default=None, description="Maximum number of message history for idea.")
+    code: int | None = Field(default=None, description="Maximum number of message history for code.")
 
 
 class Score(BaseModel):
@@ -163,17 +163,17 @@ class ReviewIdeaResult(BaseModel):
 
 
 class GeneratedIdea(BaseModel):
-    feature_map_name: str = Field(..., description="The name of the generated feature map.")
-    summary: str = Field(..., description="The summary of the generated feature map.")
-    explanation: str = Field(..., description="The detail explanation of the generated feature map.")
-    formula: str = Field(..., description="The formula of the generated feature map.")
-    key_sentences: list[str] = Field(..., description="The key sentences expressing the generated feature map.")
+    name: str = Field(..., description="The name of the generated idea.")
+    summary: str = Field(..., description="The summary of the generated idea.")
+    explanation: str = Field(..., description="The detail explanation of the generated idea.")
+    formula: str = Field(..., description="The formula of the generated idea.")
+    key_sentences: list[str] = Field(..., description="The key sentences expressing the generated idea.")
 
     def __str__(self) -> str:
         template = dedent(
             """
-            ## feature_map_name
-            {feature_map_name}
+            ## name
+            {name}
 
             ## summary
             {summary}
@@ -189,7 +189,7 @@ class GeneratedIdea(BaseModel):
             """
         )
         return template.format(
-            feature_map_name=self.feature_map_name,
+            name=self.name,
             summary=self.summary,
             explanation=self.explanation,
             formula=self.formula,
@@ -199,8 +199,8 @@ class GeneratedIdea(BaseModel):
     def get_string_for_code_generation(self) -> str:
         template = dedent(
             """
-            ### Feature Map Name
-            {feature_map_name}
+            ### Name
+            {name}
 
             ### Explanation
             {explanation}
@@ -210,7 +210,7 @@ class GeneratedIdea(BaseModel):
             """
         )
         return template.format(
-            feature_map_name=self.feature_map_name,
+            name=self.name,
             explanation=self.explanation,
             formula=self.formula,
         )
@@ -223,8 +223,8 @@ class GeneratedIdeaResult(BaseModel):
         template = dedent(
             """
             ## Idea {i}
-            ### Feature Map Name
-            {feature_map_name}
+            ### Name
+            {name}
 
             ### Explanation
             {explanation}
@@ -238,7 +238,7 @@ class GeneratedIdeaResult(BaseModel):
         for i, result in enumerate(self.results):
             idea_str = template.format(
                 i=i + 1,
-                feature_map_name=result.feature_map_name,
+                name=result.name,
                 explanation=result.explanation,
                 formula=result.formula,
             )
@@ -302,6 +302,7 @@ class RunContext(BaseModel):
         json_encoders={pd.DataFrame: lambda df: df.to_dict(orient="records")},
     )
 
+    model_type: str = Field(..., description="The model type.")
     gen_config_dirc: str = Field(..., description="The directory path for generated config.")
     gen_code_dirc: str = Field(..., description="The directory path for generated code.")
     model_versions: ModelVersions = Field(..., description="The model versions for each task.")

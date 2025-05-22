@@ -1,7 +1,6 @@
 import time
 import xml.etree.ElementTree as ET
 from textwrap import dedent
-from typing import Optional
 
 import requests
 from langsmith import traceable
@@ -60,6 +59,15 @@ class SearchReference:
     build search queries with various filters, and parse the results into
     AcademicPaper objects. It includes retry mechanisms for robust API calls.
 
+    Available search scopes:
+        - all: Search in all fields
+        - ti/title: Search in title
+        - au/author: Search in author names
+        - abs/abstract: Search in abstract
+        - co/comment: Search in comments
+        - jr/journal-ref: Search in journal references
+        - cat/subject: Search in categories
+
     Methods:
         build_search_query: Constructs a search query string with optional filters
         get_text_or_default: Safely extracts text content from XML elements
@@ -68,21 +76,43 @@ class SearchReference:
         search_arxiv: Performs paper searches on arXiv and returns results
     """
 
+    SEARCH_SCOPES = [
+        "all",
+        "ti",
+        "title",
+        "au",
+        "author",
+        "abs",
+        "abstract",
+        "co",
+        "comment",
+        "jr",
+        "journal-ref",
+        "cat",
+        "subject",
+    ]
+
     def build_search_query(
         self,
         keywords: str | list[str],
-        operator: Optional[str],
-        category: Optional[str],
-        start_date: Optional[str],
-        end_date: Optional[str],
+        operator: str | None,
+        category: str | None,
+        start_date: str | None,
+        end_date: str | None,
     ) -> str:
         if isinstance(keywords, list) and (operator not in ["AND", "OR"]):
             raise ValueError("Invalid operator. Please use 'AND' or 'OR'.")
 
+        def add_search_scope(keyword: str) -> str:
+            parts = keyword.split(":", 1)
+            if len(parts) == 2 and parts[0].lower() in self.SEARCH_SCOPES:
+                return f'"{keyword}"'
+            return f'all:"{keyword}"'
+
         if isinstance(keywords, list):
-            search_query = f" {operator} ".join(f'"{keyword}"' for keyword in keywords)
+            search_query = f" {operator} ".join(add_search_scope(keyword) for keyword in keywords)
         else:
-            search_query = f'"{keywords}"'
+            search_query = add_search_scope(keywords)
 
         if category is not None:
             search_query = f"cat:{category} AND ({search_query})"
@@ -120,10 +150,10 @@ class SearchReference:
         query: str | list[str],
         start_idx: int = 0,
         max_results: int = 10,
-        query_operator: Optional[str] = None,
-        category: Optional[str] = None,
-        start_date: Optional[str] = None,
-        end_date: Optional[str] = None,
+        query_operator: str | None = None,
+        category: str | None = None,
+        start_date: str | None = None,
+        end_date: str | None = None,
     ) -> list[AcademicPaper]:
         # fetch data from arXiv API
         search_query = self.build_search_query(query, query_operator, category, start_date, end_date)

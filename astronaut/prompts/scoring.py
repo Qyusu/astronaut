@@ -2,7 +2,8 @@
 
 from textwrap import dedent
 
-from astronaut.prompts.scoring_few_shots import SCORING_FEW_SHOTS
+from astronaut.constants import NOT_PROVIDED_INFORMATION
+from astronaut.prompts.quantum_kernel.scoring_few_shots import SCORING_FEW_SHOTS
 
 
 class ScoringIdeaPrompt:
@@ -26,10 +27,12 @@ class ScoringIdeaPrompt:
                 2. Assess Information Sufficiency: 
                     - First, confirm the round number provided by the user. If it is the final round, skip Step 2 and proceed to Step 3.
                     - Otherwise, assess whether the "# Related Work" section provides sufficient information to evaluate the idea.
-                    - If the information is insufficient for scoring, <is_lack_information> tag set to True, and list up to 5 necessary information key sentences as a comma-separated list within <additional_key_sentences> tags. The search will be conducted by embedded vector for academic paper; therefore, ensure the <additional_key_sentences> are specific and relevant. Each sentence length should be between 50 to 100 words.
-                    - In this case, terminate the scoring process and set all scores to 0.0.
+                    - If the related work information is "{not_provided_information}", skip Step 2 and proceed to Step 3.
+                    - If the information is insufficient for scoring, <is_lack_information> tag set to True, and list up to 5 necessary information key sentences as a comma-separated list within <additional_key_sentences> tags. The search will be conducted by embedded vector for academic paper; therefore, ensure the <additional_key_sentences> are specific and relevant. Each sentence length should be between 50 to 100 words. In this case, terminate the scoring process and set all scores to 0.0.
+                    - If the information is sufficient, proceed to Step 3.
                 3. Provide Reasoning:
-                    - If the information is sufficient, proceed to evaluate the idea based on the specified criteria.
+                    - Proceed to evaluate the idea based on the specified criteria.
+                    - If the related work information is "{not_provided_information}", use your own knowledge to evaluate the idea. DO NOT request additional information and <is_lack_information> tag set to False.
                     - Enclose the rationale behind the evaluation results of each indicator in <reason> tags and explain it in text.
                 4. Assign Scores:
                     - Based on the evaluation results and their rationale, assign a score to each indicator.
@@ -39,7 +42,8 @@ class ScoringIdeaPrompt:
                 # Baseline
                 {few_shot_examples}
                 """.format(
-                    few_shot_examples=SCORING_FEW_SHOTS
+                    not_provided_information=NOT_PROVIDED_INFORMATION,
+                    few_shot_examples=SCORING_FEW_SHOTS,
                 )
                 + score_histories
             ),

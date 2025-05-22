@@ -35,6 +35,7 @@ class PineconeClient:
         upsert: Upserts a document into the index by splitting it into chunks
         query: Queries the index for similar vectors based on the input text
         delete_index: Deletes the specified index from Pinecone
+        check_connection: Checks the connection to the Pinecone index
     """
 
     def __init__(self, api_key: str, index_name: str, embed_client: EmbeddingClient) -> None:
@@ -143,6 +144,20 @@ class PineconeClient:
         if index_name in exist_index_names:
             self.pc.delete_index(index_name)
             self.index = None
-            logger.info(f"Index {index_name} has been deleted.")
+            logger.info(f'Index "{index_name}" has been deleted.')
         else:
-            logger.info(f"Index {index_name} does not exist.")
+            logger.info(f'Index "{index_name}" does not exist.')
+
+    def check_connection(self) -> bool:
+        try:
+            if self.index is None:
+                logger.error("Index is not created.")
+                return False
+
+            index_stats = str(self.index.describe_index_stats()).replace("\n", " ")
+            logger.info(f'Index "{self.index_name}" is connected.')
+            logger.info(f"Index stats: {index_stats}")
+            return True
+        except Exception as e:
+            logger.error(f"Connection check failed: {str(e)}")
+            return False

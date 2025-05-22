@@ -1,7 +1,7 @@
 import pytest
 
 from astronaut.llm import ChatClient
-from astronaut.logics.review import ReviewIdea
+from astronaut.logics.common.review import ReviewIdea
 from astronaut.schema import ModelVersions
 
 
