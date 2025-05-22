@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Literal, Optional, Type
+from typing import Literal, Type
 
 from loguru import logger
 from pydantic import BaseModel
@@ -39,15 +39,15 @@ class BaseLLMClient(ABC):
         system_prompt: dict[str, str],
         user_prompt: dict[str, str],
         message_history: MESSAGE_HISTORY_TYPE = [],
-        n_history: Optional[int] = None,
+        n_history: int | None = None,
         temperature: float = 0.0,
-        n: Optional[int] = 1,
-        max_tokens: Optional[int] = None,
-        response_format: Optional[Type[BaseModel]] = None,
-        model_version: Optional[str] = None,
+        n: int = 1,
+        max_tokens: int | None = None,
+        response_format: Type[BaseModel] | None = None,
+        model_version: str | None = None,
         max_retries: int = 3,
-        reasoning_effort: Optional[Literal["low", "medium", "high"]] = None,
-        max_thinking_tokens: Optional[int] = None,
+        reasoning_effort: Literal["low", "medium", "high"] | None = None,
+        max_thinking_tokens: int | None = None,
         **kwargs: dict,
     ) -> tuple[str, MESSAGE_HISTORY_TYPE, float]:
         """Perform chat completion with the LLM.
@@ -62,24 +62,24 @@ class BaseLLMClient(ABC):
                 for the current request
             message_history (MESSAGE_HISTORY_TYPE, optional): Previous conversation
                 history. Defaults to empty list.
-            n_history (Optional[int], optional): Number of previous exchanges to
+            n_history (int | None, optional): Number of previous exchanges to
                 include in the context. If None, includes all history. Defaults to None.
             temperature (float, optional): Controls randomness in generation.
                 Higher values (e.g., 0.8) make output more random, lower values
                 (e.g., 0.2) make it more deterministic. Defaults to 0.0.
-            n (Optional[int], optional): Number of completions to generate.
+            n (int, optional): Number of completions to generate.
                 Note: Not supported by Anthropic API. Defaults to 1.
-            max_tokens (Optional[int], optional): Maximum number of tokens to
+            max_tokens (int | None, optional): Maximum number of tokens to
                 generate in the response. Defaults to None.
-            response_format (Optional[Type[BaseModel]], optional): Pydantic model
+            response_format (Type[BaseModel] | None, optional): Pydantic model
                 defining the expected response structure. Defaults to None.
-            model_version (Optional[str], optional): Specific version of the model
+            model_version (str | None, optional): Specific version of the model
                 to use. Defaults to None.
             max_retries (int, optional): Maximum number of retry attempts for
                 failed API calls. Defaults to 3.
-            reasoning_effort (Optional[Literal["low", "medium", "high"]], optional):
+            reasoning_effort (Literal["low", "medium", "high"] | None, optional):
                 Level of reasoning effort for OpenAI API. Defaults to None.
-            max_thinking_tokens (Optional[int], optional): Maximum number of tokens
+            max_thinking_tokens (int | None, optional): Maximum number of tokens
                 for thinking process in Anthropic API. Defaults to None.
             **kwargs: Additional provider-specific parameters.
 
@@ -95,9 +95,7 @@ class BaseLLMClient(ABC):
         """
         pass
 
-    def _get_last_n_history(
-        self, message_history: MESSAGE_HISTORY_TYPE, n_history: Optional[int]
-    ) -> MESSAGE_HISTORY_TYPE:
+    def _get_last_n_history(self, message_history: MESSAGE_HISTORY_TYPE, n_history: int | None) -> MESSAGE_HISTORY_TYPE:
         if n_history is None:
             # use all history
             history = message_history

@@ -1,4 +1,4 @@
-openai>=1.68.2
+openai>=1.75.0
 qxmt==0.4.7
 pydantic>=2.9.2,<3.0.0
 pydantic-settings>=2.6.0,<3.0.0

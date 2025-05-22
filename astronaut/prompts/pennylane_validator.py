@@ -14,7 +14,7 @@ class PennyLaneDocsValidatePrompt:
                 """
                 You are an expert quantum software engineer especially skilled in the PennyLane library.
 
-                Your Task is to extracted argments from the user proviced PennyLane function and PennyLane documentation. The Details are as follows:
+                Your Task is to extracted argments from the user provided PennyLane function and PennyLane documentation. The Details are as follows:
                 # Task
                 For each function or class in the provided input, follow these steps:
 

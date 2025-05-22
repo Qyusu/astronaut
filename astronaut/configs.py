@@ -2,6 +2,8 @@ import os
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+ENV_NONE_PATTERN = ["None", "NONE", "none", ""]
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
@@ -16,7 +18,8 @@ class Settings(BaseSettings):
 
     # Chat setting
     CHAT_PLATFORM: str = "openai"
-    DEFAULT_MODEL_VERSION: str = "gpt-4o-mini"
+    DEFAULT_MODEL_VERSION: str = "gpt-4.1-2025-04-14"
+    DEFAULT_REASONING_MODEL_VERSION: str = "o4-mini-2025-04-16"
     IDEA_MODEL_VERSION: str = ""
     SCORING_MODEL_VERSION: str = ""
     SUMMARY_MODEL_VERSION: str = ""
@@ -28,22 +31,56 @@ class Settings(BaseSettings):
 
     # Embedding setting
     EMBEDDING_PLATFORM: str = "openai"
-    EMBEDDING_MODEL_VERSION: str = "text-embedding-3-small"
+    EMBEDDING_MODEL_VERSION: str | None = None
     EMBEDDING_DIM: int = 1536
 
     # Pinecone setting
-    PINECONE_API_KEY: str = ""
-    PENNLYLANE_INDEX_NAME: str = ""
-    ARXIV_INDEX_NAME: str = ""
+    PINECONE_API_KEY: str | None = None
+    PENNLYLANE_INDEX_NAME: str | None = None
+    ARXIV_INDEX_NAME: str | None = None
 
     # Local paper setting
-    LOCAL_PAPER_DIR: str = ""
+    LOCAL_PAPER_DIR: str | None = None
 
     # LangSmith setting
     LANGCHAIN_TRACING_V2: str = ""
     LANGCHAIN_ENDPOINT: str = ""
     LANGCHAIN_API_KEY: str = ""
     LANGCHAIN_PROJECT: str = ""
+
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**kwargs)
+        if not self.IDEA_MODEL_VERSION:
+            self.IDEA_MODEL_VERSION = self.DEFAULT_REASONING_MODEL_VERSION
+        if not self.SCORING_MODEL_VERSION:
+            self.SCORING_MODEL_VERSION = self.DEFAULT_MODEL_VERSION
+        if not self.SUMMARY_MODEL_VERSION:
+            self.SUMMARY_MODEL_VERSION = self.DEFAULT_MODEL_VERSION
+        if not self.REFLECTION_MODEL_VERSION:
+            self.REFLECTION_MODEL_VERSION = self.DEFAULT_REASONING_MODEL_VERSION
+        if not self.CODE_MODEL_VERSION:
+            self.CODE_MODEL_VERSION = self.DEFAULT_REASONING_MODEL_VERSION
+        if not self.VALIDATION_MODEL_VERSION:
+            self.VALIDATION_MODEL_VERSION = self.DEFAULT_MODEL_VERSION
+        if not self.REVIEW_MODEL_VERSION:
+            self.REVIEW_MODEL_VERSION = self.DEFAULT_REASONING_MODEL_VERSION
+        if not self.PARSER_MODEL_VERSION:
+            self.PARSER_MODEL_VERSION = self.DEFAULT_MODEL_VERSION
+
+        if not self.EMBEDDING_MODEL_VERSION or self.EMBEDDING_MODEL_VERSION in ENV_NONE_PATTERN:
+            self.EMBEDDING_MODEL_VERSION = None
+
+        if not self.PINECONE_API_KEY or self.PINECONE_API_KEY in ENV_NONE_PATTERN:
+            self.PINECONE_API_KEY = None
+
+        if not self.PENNLYLANE_INDEX_NAME or self.PENNLYLANE_INDEX_NAME in ENV_NONE_PATTERN:
+            self.PENNLYLANE_INDEX_NAME = None
+
+        if not self.ARXIV_INDEX_NAME or self.ARXIV_INDEX_NAME in ENV_NONE_PATTERN:
+            self.ARXIV_INDEX_NAME = None
+
+        if not self.LOCAL_PAPER_DIR or self.LOCAL_PAPER_DIR in ENV_NONE_PATTERN:
+            self.LOCAL_PAPER_DIR = None
 
 
 settings = Settings()
