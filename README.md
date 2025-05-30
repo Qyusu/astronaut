@@ -241,5 +241,24 @@ The following parameters are available for running experiments:
 - `--max_suggestion_num` (integer, required): Maximum number of suggestions to generate per idea. Controls the depth of exploration for each idea.
 - `--max_reflection_round` (integer, required): Maximum number of reflection rounds per suggestion. Controls how many times the system can refine its approach.
 
+
+## Citing this work
+
+If you use the code in this package, please cite:
+
+```bibtex
+@Article{Sakka2025,
+  author  = {Kenya Sakka and Kosuke Mitarai and Keisuke Fujii},
+  title   = {Automating quantum feature map design via large language models},
+  journal = {arXiv preprint arXiv:2504.07396},
+  year    = {2025},
+  month   = {April},
+  url     = {https://arxiv.org/abs/2504.07396},
+  note    = {39 pages, 6 figures},
+  doi     = {10.48550/arXiv.2504.07396}
+}
+
+```
+
 ## License
 This project is licensed under the terms specified in the [LICENSE](LICENSE) file.
