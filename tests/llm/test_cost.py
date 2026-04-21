@@ -24,17 +24,23 @@ def test_chat_model_cost_table_get_cost() -> None:
     cost_table = ChatModelCostTable()
 
     # Test existing models
-    gpt4o_cost = cost_table.get_cost("gpt-4o")
+    gpt4o_cost = cost_table.get_cost("gpt-5")
     assert gpt4o_cost is not None
-    assert gpt4o_cost.input == 2.5
-    assert gpt4o_cost.cached == 1.25
+    assert gpt4o_cost.input == 1.25
+    assert gpt4o_cost.cached == 0.125
     assert gpt4o_cost.output == 10.0
 
-    gemini_cost = cost_table.get_cost("gemini-2.0-flash")
+    gemini_cost = cost_table.get_cost("gemini-2.5-pro")
     assert gemini_cost is not None
-    assert gemini_cost.input == 0.1
-    assert gemini_cost.cached == 0.025
-    assert gemini_cost.output == 0.4
+    assert gemini_cost.input == 1.25
+    assert gemini_cost.cached == 0.125
+    assert gemini_cost.output == 10.0
+
+    claude_cost = cost_table.get_cost("claude-sonnet-4-5")
+    assert claude_cost is not None
+    assert claude_cost.input == 3.0
+    assert claude_cost.cached == 0.3
+    assert claude_cost.output == 15.0
 
     # Test non-existent model
     assert cost_table.get_cost("non-existent-model") is None
@@ -46,9 +52,9 @@ def test_chat_model_cost_table_list_models() -> None:
     models = cost_table.list_models()
 
     assert len(models) > 0
-    assert "gpt-4o" in models
-    assert "gemini-2.0-flash" in models
-    assert "claude-3-5-haiku" in models
+    assert "gpt-5" in models
+    assert "gemini-2.5-pro" in models
+    assert "claude-sonnet-4-5" in models
 
 
 def test_embedding_model_cost_per_1m_token() -> None:

@@ -1,25 +1,24 @@
 import re
 import time
-from typing import Literal, Type, cast
+import traceback
+from typing import Iterable, Literal, Type, cast
 
-from langsmith import traceable
 from langsmith.wrappers import wrap_openai
 from loguru import logger
 from openai import NOT_GIVEN, NotGiven, OpenAI
-from openai.types.chat import (
-    ChatCompletion,
-    ChatCompletionAssistantMessageParam,
-    ChatCompletionDeveloperMessageParam,
-    ChatCompletionSystemMessageParam,
-    ChatCompletionUserMessageParam,
+from openai.types.responses.parsed_response import ParsedResponse
+from openai.types.responses.response import Response
+from openai.types.responses.response_text_config_param import (
+    ResponseTextConfigParam,
 )
+from openai.types.responses.tool_param import ParseableToolParam, ToolParam
+from openai.types.shared.reasoning_effort import ReasoningEffort
+from openai.types.shared_params.reasoning import Reasoning
 from pydantic import BaseModel, ValidationError
 
-from astronaut.constants import REASONING_SERIES
 from astronaut.llm.base import BaseLLMClient
 from astronaut.schema import (
     MESSAGE_HISTORY_TYPE,
-    MESSAGE_TYPE,
     OPENAI_MESSAGE_HISTORY_TYPE,
 )
 
@@ -32,14 +31,8 @@ class OpenAIChatClient(BaseLLMClient):
     Reasoning series models. It handles message construction, response parsing,
     and cost tracking specific to OpenAI's API.
 
-    The class supports two types of API requests:
-    1. Reasoning series API: Optimized for complex reasoning tasks with specialized
-       parameters like reasoning_effort
-    2. GPT series API: Standard chat completion with temperature control and
-       structured response formats
-
     Features include:
-    - System and developer prompts
+    - Developer and user prompts
     - Temperature control
     - Multiple completions
     - Structured response formats
@@ -57,10 +50,8 @@ class OpenAIChatClient(BaseLLMClient):
 
     Methods:
         parse_chat: Main method for chat completion with OpenAI models
-        _construct_message: Helper method to format messages for API requests
         _update_history: Updates conversation history with new messages
-        _chat_reasoning_model: Handles requests to reasoning series models
-        _chat: Handles requests to GPT series models
+        _chat_by_responses_api: Handles requests by responses API
         _get_model_name_from_version: Extracts base model name from version string
         _get_token_count: Calculates token usage from API responses
         _parse_response: Processes and formats API responses
@@ -73,158 +64,28 @@ class OpenAIChatClient(BaseLLMClient):
         self,
         api_key: str,
         default_model_version: str,
-        reasoning_effort: Literal["low", "medium", "high"],
     ) -> None:
         super().__init__()
         self.client = wrap_openai(OpenAI(api_key=api_key))
         self.default_model_version = default_model_version
-        self.reasoning_effort = reasoning_effort
         self.total_cost = 0.0
-
-    def _construct_message(
-        self,
-        model_type: str,
-        system_prompt: dict[str, str],
-        user_prompt: dict[str, str],
-        message_history: OPENAI_MESSAGE_HISTORY_TYPE,
-    ) -> MESSAGE_TYPE:
-        if model_type == "reasoning":
-            system_message = ChatCompletionDeveloperMessageParam(role="developer", content=system_prompt["content"])
-        else:
-            system_message = ChatCompletionSystemMessageParam(role="system", content=system_prompt["content"])
-        user_message = ChatCompletionUserMessageParam(role="user", content=user_prompt["content"])
-        messages = [system_message] + message_history + [user_message]
-        return messages
-
-    def _update_history(
-        self,
-        user_prompt: dict[str, str],
-        message_history: OPENAI_MESSAGE_HISTORY_TYPE,
-        content: str,
-    ) -> OPENAI_MESSAGE_HISTORY_TYPE:
-        user_message = ChatCompletionUserMessageParam(role="user", content=user_prompt["content"])
-        assistant_message = ChatCompletionAssistantMessageParam(role="assistant", content=content)
-        updated_message_history = message_history + [user_message, assistant_message]
-
-        return updated_message_history
-
-    @traceable(tags=["llm"], run_type="llm")
-    def _chat_reasoning_model(
-        self,
-        model_version: str,
-        messages: OPENAI_MESSAGE_HISTORY_TYPE,
-        n: int,
-        max_tokens: int | None,
-        response_format: Type[BaseModel] | NotGiven,
-        reasoning_effort: Literal["low", "medium", "high"],
-    ) -> ChatCompletion:
-        """Handles chat completion requests using OpenAI's Reasoning series models.
-
-        This method is specifically designed for models optimized for complex reasoning
-        tasks, supporting specialized parameters like reasoning_effort to control the
-        depth of analysis.
-
-        Args:
-            model_version (str): OpenAI model version to use
-            messages (OPENAI_MESSAGE_HISTORY_TYPE): List of chat messages including history
-            n (int): Number of completions to generate
-            max_tokens (int | None): Maximum number of tokens to generate in the response
-            response_format (Type[BaseModel] | NotGiven): Expected response format structure
-            reasoning_effort (Literal["low", "medium", "high"]): Level of reasoning effort
-                to apply during generation
-
-        Returns:
-            ChatCompletion: OpenAI Chat Completion object containing the model's response
-
-        Note:
-            This method is wrapped with LangSmith tracing for monitoring and debugging.
-        """
-        completion = self.client.beta.chat.completions.parse(
-            model=model_version,
-            messages=messages,
-            n=n,
-            max_completion_tokens=max_tokens,
-            response_format=response_format,
-            reasoning_effort=reasoning_effort,
-        )
-        return completion
-
-    @traceable(tags=["llm"], run_type="llm")
-    def _chat(
-        self,
-        model_version: str,
-        messages: OPENAI_MESSAGE_HISTORY_TYPE,
-        temperature: float,
-        n: int,
-        max_tokens: int | None,
-        response_format: Type[BaseModel] | NotGiven,
-    ) -> ChatCompletion:
-        """Handles chat completion requests using OpenAI's GPT series models.
-
-        This method provides standard chat completion functionality with support for
-        temperature control and structured response formats.
-
-        Args:
-            model_version (str): OpenAI model version to use
-            messages (OPENAI_MESSAGE_HISTORY_TYPE): List of chat messages including history
-            temperature (float): Controls randomness in generation (0.0 to 1.0)
-            n (int): Number of completions to generate
-            max_tokens (int | None): Maximum number of tokens to generate in the response
-            response_format (Type[BaseModel] | NotGiven): Expected response format structure
-
-        Returns:
-            ChatCompletion: OpenAI Chat Completion object containing the model's response
-
-        Note:
-            This method is wrapped with LangSmith tracing for monitoring and debugging.
-        """
-        completion = self.client.beta.chat.completions.parse(
-            model=model_version,
-            messages=messages,
-            temperature=temperature,
-            n=n,
-            max_tokens=max_tokens,
-            response_format=response_format,
-        )
-        return completion
-
-    def _get_model_name_from_version(self, model_version: str) -> str:
-        return re.sub(r"-\d{4}-\d{2}-\d{2}$", "", model_version)
-
-    def _get_token_count(self, completion: ChatCompletion) -> tuple[int, int, int]:
-        usage = completion.usage
-        if usage is None:
-            logger.info("Usage information is not found in the completion.")
-            return 0, 0, 0
-
-        input_tokens = usage.model_dump().get("prompt_tokens", 0)
-        cached_tokens = (usage.model_dump().get("prompt_tokens_details") or {}).get("cached_tokens", 0)
-        output_tokens = usage.model_dump().get("completion_tokens", 0)
-
-        return input_tokens, cached_tokens, output_tokens
-
-    def _parse_response(self, completion: ChatCompletion) -> str:
-        try:
-            content = completion.choices[0].message.content
-            if content is None:
-                raise ValueError("OpenAI response is None.")
-            return content
-        except (KeyError, AttributeError) as e:
-            raise ValueError(f"Failed to parse OpenAI response: {e}")
 
     def parse_chat(
         self,
-        system_prompt: dict[str, str],
+        developer_prompt: dict[str, str],
         user_prompt: dict[str, str],
         message_history: MESSAGE_HISTORY_TYPE = [],
         n_history: int | None = None,
-        temperature: float = 0.0,
+        temperature: float | None = None,
         n: int = 1,
         max_tokens: int | None = None,
         response_format: Type[BaseModel] | None = None,
         model_version: str | None = None,
         max_retries: int = 3,
-        reasoning_effort: Literal["low", "medium", "high"] | None = None,
+        reasoning_effort: ReasoningEffort | None = None,
+        verbosity: Literal["low", "medium", "high"] | None = None,
+        tools: Iterable[ParseableToolParam | ToolParam] | None = None,
+        background: bool = False,
     ) -> tuple[str, MESSAGE_HISTORY_TYPE, float]:
         """Main method for chat completion with OpenAI models.
 
@@ -232,16 +93,17 @@ class OpenAIChatClient(BaseLLMClient):
         series models. It automatically selects the appropriate API based on the model
         version and includes retry logic with exponential backoff for failed requests.
 
-        The method supports two types of API requests:
-        1. Reasoning series API: Uses specialized parameters for complex reasoning tasks
-        2. GPT series API: Uses standard parameters for general chat completion
+        The method supports three types of API requests:
+        1. Responses series API: Uses specialized parameters for complex reasoning tasks. This API is stateful.
+        2. Reasoning series API: Uses specialized parameters for complex reasoning tasks. This API is stateless.
+        3. GPT series API: Uses standard parameters for general chat completion. This API is stateless.
 
         Args:
-            system_prompt (dict[str, str]): System prompt containing role and content
+            developer_prompt (dict[str, str]): Developer prompt containing role and content
             user_prompt (dict[str, str]): User prompt containing role and content
             message_history (MESSAGE_HISTORY_TYPE, optional): Previous conversation
                 history. Defaults to empty list.
-            n_history (int | None, optional): Number of previous exchanges to include
+            n_history (int | None, optional): Number of previous history to include
                 in the context. If None, includes all history. Defaults to None.
             temperature (float, optional): Controls randomness in generation.
                 Higher values (e.g., 0.8) make output more random, lower values
@@ -255,9 +117,15 @@ class OpenAIChatClient(BaseLLMClient):
                 If None, uses the default model version. Defaults to None.
             max_retries (int, optional): Maximum number of retry attempts for
                 failed API calls. Defaults to 3.
-            reasoning_effort (Literal["low", "medium", "high"], optional):
+            reasoning_effort (Literal["minimum", "low", "medium", "high"], optional):
                 Level of reasoning effort for Reasoning series models.
                 Defaults to "high".
+            verbosity (Literal["low", "medium", "high"], optional):
+                Level of verbosity for the response. Defaults to "medium".
+            tools (Iterable[ParseableToolParam] | NotGiven, optional):
+                Tools to use for the API call. Defaults to NOT_GIVEN.
+            background (bool, optional): Whether to run the API call in the background.
+                Defaults to False.
 
         Returns:
             tuple[str, MESSAGE_HISTORY_TYPE, float]: A tuple containing:
@@ -269,43 +137,47 @@ class OpenAIChatClient(BaseLLMClient):
             ValueError: If there's a validation error in the API process
             ValueError: If all retry attempts fail to get a response
         """
-        if model_version is None:
-            model_version = self.default_model_version
+        model_version = model_version or self.default_model_version
+        previous_response_id = self._get_previous_response_id(
+            cast(OPENAI_MESSAGE_HISTORY_TYPE, message_history), n_history
+        )
 
-        history = cast(OPENAI_MESSAGE_HISTORY_TYPE, self._get_last_n_history(message_history, n_history))
-        response_json_format = NOT_GIVEN if response_format is None else response_format
         attempts = 0
-
         while True:
             try:
-                if model_version in REASONING_SERIES:
-                    # Use OpenAI O1 series API
-                    messages = self._construct_message("reasoning", system_prompt, user_prompt, history)
-                    completion = self._chat_reasoning_model(
-                        model_version=model_version,
-                        messages=messages,
-                        n=n,
-                        max_tokens=max_tokens,
-                        response_format=response_json_format,
-                        reasoning_effort=reasoning_effort or self.reasoning_effort,
-                    )
-                else:
-                    # Use OpenAI GPT series API
-                    messages = self._construct_message("gpt", system_prompt, user_prompt, history)
-                    completion = self._chat(
-                        model_version=model_version,
-                        messages=messages,
-                        temperature=temperature,
-                        n=n,
-                        max_tokens=max_tokens,
-                        response_format=response_json_format,
-                    )
-
-                content = self._parse_response(completion)
-                updated_message_history = self._update_history(
-                    user_prompt, cast(OPENAI_MESSAGE_HISTORY_TYPE, message_history), content
+                chat_function = (
+                    self._chat_background
+                    if background
+                    else self._chat_by_responses_api
                 )
-                input_tokens, cached_tokens, output_tokens = self._get_token_count(completion)
+
+                chat_kwargs = {
+                    "model_version": model_version,
+                    "instructions": developer_prompt["content"],
+                    "input": user_prompt["content"],
+                    "previous_response_id": previous_response_id,
+                    "temperature": temperature or NOT_GIVEN,
+                    "max_tokens": max_tokens or NOT_GIVEN,
+                    "response_format": response_format or NOT_GIVEN,
+                    "reasoning": Reasoning(effort=reasoning_effort)
+                    if reasoning_effort
+                    else NOT_GIVEN,
+                    "text": {"verbosity": verbosity}
+                    if verbosity
+                    else NOT_GIVEN,
+                    "tools": tools or NOT_GIVEN,
+                }
+
+                raw_response = chat_function(**chat_kwargs)
+
+                content = self._parse_response(raw_response)
+                updated_message_history = self._update_history(
+                    cast(OPENAI_MESSAGE_HISTORY_TYPE, message_history),
+                    raw_response.id,
+                )
+                input_tokens, cached_tokens, output_tokens = (
+                    self._get_token_count(raw_response)
+                )
                 cost = self._calculate_cost(
                     input_tokens=input_tokens,
                     cached_tokens=cached_tokens,
@@ -317,11 +189,154 @@ class OpenAIChatClient(BaseLLMClient):
             except ValidationError as e:
                 raise ValueError(f"Validation error in messages: {e}")
             except Exception as e:
-                logger.info(f"Raise Exception: {e}")
+                logger.debug(traceback.format_exc())
+                logger.warning(f"Raise Exception: {e}")
                 attempts += 1
                 if attempts >= max_retries:
-                    raise ValueError(f"Failed to get response from OpenAI after {max_retries} attempts: {e}")
+                    raise ValueError(
+                        f"Failed to get response from OpenAI after {max_retries} attempts: {e}"
+                    )
 
                 wait_time = 60 * 2**attempts
                 logger.info(f"Retry after {wait_time} seconds...")
                 time.sleep(wait_time)
+
+    def _chat_by_responses_api(
+        self,
+        model_version: str,
+        instructions: str,
+        input: str,
+        previous_response_id: str | NotGiven,
+        temperature: float | NotGiven,
+        max_tokens: int | NotGiven,
+        response_format: Type[BaseModel] | NotGiven,
+        reasoning: Reasoning | NotGiven,
+        text: ResponseTextConfigParam | NotGiven,
+        tools: Iterable[ParseableToolParam] | NotGiven,
+    ) -> ParsedResponse:
+        """Handles chat completion requests using OpenAI's Responses series models.
+
+        This method is specifically designed for models optimized for complex reasoning
+        tasks, supporting specialized parameters like reasoning_effort to control the
+        depth of analysis.
+
+        Responses API is stateful, but this method is not supporting the stateful feature (not using chat history).
+
+        Args:
+            model_version (str): OpenAI model version to use
+            instructions (str): Developer prompt containing role and content
+            input (str): User prompt containing role and content
+            previous_response_id (str): Previous response id
+            temperature (float | NotGiven): Temperature parameter
+            max_tokens (int | NotGiven): Maximum number of tokens to generate
+            response_format (Type[BaseModel] | NotGiven): Expected response format structure
+            reasoning (Reasoning | NotGiven): Reasoning parameters
+            text (ResponseTextConfigParam | NotGiven): Verbosity of the response
+            tools (Iterable[ParseableToolParam] | NotGiven): Tools to use for the API call
+
+        Returns:
+            ParsedResponse: OpenAI Parsed Response object containing the model's response
+
+        Note:
+            This method is wrapped with LangSmith tracing for monitoring and debugging.
+        """
+        response = self.client.responses.parse(
+            model=model_version,
+            instructions=instructions,
+            input=input,
+            previous_response_id=previous_response_id,
+            temperature=temperature,
+            max_output_tokens=max_tokens,
+            text_format=response_format,
+            reasoning=reasoning,
+            text=text,
+            tools=tools,
+            store=True,
+        )
+        return response
+
+    def _chat_background(
+        self,
+        model_version: str,
+        instructions: str,
+        input: str,
+        previous_response_id: str | NotGiven,
+        temperature: float | NotGiven,
+        max_tokens: int | NotGiven,
+        response_format: Type[BaseModel] | NotGiven,
+        reasoning: Reasoning | NotGiven,
+        text: ResponseTextConfigParam | NotGiven,
+        tools: Iterable[ToolParam] | NotGiven,
+    ) -> Response:
+        if response_format is not NOT_GIVEN:
+            logger.warning(
+                "response_format is not supported in background mode. "
+                "It will be ignored."
+            )
+
+        response = self.client.responses.create(
+            model=model_version,
+            instructions=instructions,
+            input=input,
+            previous_response_id=previous_response_id,
+            temperature=temperature,
+            max_output_tokens=max_tokens,
+            reasoning=reasoning,
+            text=text,
+            tools=tools,
+            background=True,
+            store=True,
+        )
+
+        logger.info("Request is sent to OpenAI. Processing in background...")
+        while response.status in {"queued", "in_progress"}:
+            time.sleep(2)
+            response = self.client.responses.retrieve(response.id)
+
+        return response
+
+    def _parse_response(self, response: ParsedResponse | Response) -> str:
+        try:
+            content = response.output[-1].content[0].text  # type: ignore
+
+            if content is None:
+                raise ValueError("OpenAI response is None.")
+            return content
+        except (KeyError, AttributeError) as e:
+            raise ValueError(f"Failed to parse OpenAI response: {e}")
+
+    def _get_previous_response_id(
+        self,
+        message_history: OPENAI_MESSAGE_HISTORY_TYPE,
+        n_history: int | None,
+    ) -> str | NotGiven:
+        if len(message_history) == 0 or n_history == 0:
+            return NOT_GIVEN
+
+        return message_history[-1]
+
+    def _update_history(
+        self,
+        message_history: OPENAI_MESSAGE_HISTORY_TYPE,
+        previous_response_id: str,
+    ) -> OPENAI_MESSAGE_HISTORY_TYPE:
+        return message_history + [previous_response_id]
+
+    def _get_model_name_from_version(self, model_version: str) -> str:
+        return re.sub(r"-\d{4}-\d{2}-\d{2}$", "", model_version)
+
+    def _get_token_count(
+        self, response: ParsedResponse | Response
+    ) -> tuple[int, int, int]:
+        usage = response.usage
+        if usage is None:
+            logger.info("Usage information is not found in the completion.")
+            return 0, 0, 0
+
+        input_tokens = usage.model_dump().get("input_tokens", 0)
+        cached_tokens = (
+            usage.model_dump().get("input_tokens_details") or {}
+        ).get("cached_tokens", 0)
+        output_tokens = usage.model_dump().get("output_tokens", 0)
+
+        return input_tokens, cached_tokens, output_tokens

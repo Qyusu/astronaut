@@ -1,0 +1,77 @@
+mnist:
+  file:
+    data_path: "data/datasets/mnist/X_train.npy"
+    label_path: "data/datasets/mnist/y_train.npy"
+    label_name: null
+  split:
+    train_ratio: 0.6
+    validation_ratio: 0.2
+    test_ratio: 0.2
+    shuffle: true
+  features: null
+  raw_preprocess_logic:
+    module_name: "qxmt.datasets.raw_preprocess.sampling"
+    implement_name: "sampling_by_each_class"
+    params:
+      n_samples: 60000
+      labels: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+      random_seed: 42
+  transform_logic:
+    module_name: "qxmt.datasets.transform.reducer"
+    implement_name: "dimension_reduction_by_pca"
+    params:
+      n_components: 80
+      normalize: true
+      random_seed: 42
+
+fashion_mnist:
+  file:
+    data_path: "data/datasets/fashion_mnist/X_train.npy"
+    label_path: "data/datasets/fashion_mnist/y_train.npy"
+    label_name: null
+  split:
+    train_ratio: 0.6
+    validation_ratio: 0.2
+    test_ratio: 0.2
+    shuffle: true
+  features: null
+  raw_preprocess_logic:
+    module_name: "qxmt.datasets.raw_preprocess.sampling"
+    implement_name: "sampling_by_each_class"
+    params:
+      n_samples: 60000
+      labels: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+      random_seed: 42
+  transform_logic:
+    module_name: "qxmt.datasets.transform.reducer"
+    implement_name: "dimension_reduction_by_pca"
+    params:
+      n_components: 80
+      normalize: true
+      random_seed: 42
+
+cifar_10:
+  file:
+    data_path: "data/datasets/cifar_10/X_train.npy"
+    label_path: "data/datasets/cifar_10/y_train.npy"
+    label_name: null
+  split:
+    train_ratio: 0.6
+    validation_ratio: 0.2
+    test_ratio: 0.2
+    shuffle: true
+  features: null
+  raw_preprocess_logic:
+    module_name: "qxmt.datasets.raw_preprocess.sampling"
+    implement_name: "sampling_by_each_class"
+    params:
+      n_samples: 60000
+      labels: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+      random_seed: 42
+  transform_logic:
+    module_name: "qxmt.datasets.transform.reducer"
+    implement_name: "dimension_reduction_by_pca"
+    params:
+      n_components: 80
+      normalize: true
+      random_seed: 42

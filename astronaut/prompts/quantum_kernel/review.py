@@ -2,52 +2,63 @@
 
 from textwrap import dedent
 
-from astronaut.constants import REASONING_SERIES
+from astronaut.prompts.quantum_kernel.constraints import (
+    FEATURE_MAP_CONSTRAINTS,
+    INPUT_DATA_CONSTRAINTS,
+    PERFORMANCE_METRIC_DEFINITION,
+)
 
 
 class ReviewIdeaPrompt:
-    def __init__(self, llm_model_version: str, max_suggestion_num: int = 3) -> None:
-        self.llm_model_version = llm_model_version
+    def __init__(
+        self,
+        feature_map_constraints: str = FEATURE_MAP_CONSTRAINTS.strip(),
+        performance_metric_definition: str = PERFORMANCE_METRIC_DEFINITION.strip(),
+        input_data_constraints: str = INPUT_DATA_CONSTRAINTS.strip(),
+        max_suggestion_num: int = 3,
+    ) -> None:
+        self.feature_map_constraints = feature_map_constraints
+        self.performance_metric_definition = performance_metric_definition
+        self.input_data_constraints = input_data_constraints
         self.max_suggestion_num = max_suggestion_num
 
         self.developer_template = dedent(
             """
+            # Role
             You are an expert in quantum physics and quantum machine learning, specializing in quantum feature map design.
 
-            # Task
-            Your task is to review past ideas on quantum feature maps and their evaluation results, and propose improvements to enhance accuracy through continuous refinement. Restrict your review to the quantum feature map design itself; do not propose changes to the overall model, evaluation metrics, or other workflows.
 
-            # Quantum Feature Map Definition
-            Quantum feature maps (Φ(x)) will be used to compute the quantum kernel K(x, x') = |⟨Φ(x)|Φ(x')⟩|^2 for a QSVM (Quantum Support Vector Machine).
-            1. **Design Considerations**:
-                - Define combinations of quantum gates.
-                - Define an entanglement pattern for the features.
-                - Specify the method for embedding input data and quantum states as rotation angles of quantum gates.
-                - Ensure the 80-dimensional input data is utilized effectively, minimizing any loss of information.
-                    - Avoid excessive feature compression that may lead to information loss (e.g., simple feature averaging, summing, etc.).
-            2. **Restrictions on Encoding and Embedding**:
-                - Only **linear functions** are allowed for encoding and embedding.
-                - All parameters in the encoding and embedding must be **non-trainable**.
+            # Task
+            Your task is to review past ideas on quantum feature maps and their evaluation results, and propose improvements to enhance performance metric through continuous refinement. Restrict your review to the quantum feature map design itself; do not propose changes to the overall model, evaluation metrics, or other workflows.
+
+            Encourage innovative approaches that go beyond simple combinations of established methods when suggesting improvements.
+
+
+            # Feature Map Constraints
+            {feature_map_constraints}
+
+            # Performance Metric Definition
+            {performance_metric_definition}
+
+            # Input Data Constraints
+            {input_data_constraints}
+
 
             # Output Format
             1. Keep Points:
-                - Identify factors that contributed to improved accuracy.
+                - Identify factors that contributed to improved performance metric.
                 - Analyze the most accurate idea in detail.
-                - Review multiple ideas to identify common elements that contributed to improving accuracy.
+                - Review multiple ideas to identify common elements that contributed to improving performance metric.
             2. Suggestions:
                 - Limit the number of suggestions to {max_suggestion_num} or fewer.
                 - Ensure each suggestion includes only a single proposal.
+                - Each suggestion should be independent and not overlap with other suggestions.
                 - Prioritize the most impactful suggestions.
                 - If no suggestions for improvement are identified, return suggestions: ["COMPLETED"].
             3. Output Schema: {{
                 "keep_points": ["point 1", "point 2", ..., "point n"],
                 "suggestions": ["suggestion 1", "suggestion 2", ..., "suggestion n"]
-                }}.
-
-            # Notes
-            - Input Data: The input data, originally represented as 784-dimensional image data, has been compressed to 80 dimensions using PCA and each value normalized to the range [0.0, 1.0]
-            - Simulation: Use an ideal quantum simulator without noise for evaluation
-            - Evaluation Metric: Classification accuracy is the primary metric. The goal is to achieve the highest possible accuracy.
+                }}
             """
         )
 
@@ -59,9 +70,9 @@ class ReviewIdeaPrompt:
     ) -> dict[str, str]:
         template = dedent(
             """
-            The previous idea and experimental results are provided below in the "# Previous Trial Idea and Results" section. These reflect iterative adjustments based on past trial review comments. 
-            
-            Review the trial results to design a quantum feature map for a more accurate QSVM. Identify the factors that contributed to accuracy improvement and areas for further enhancement. Finally, check whether the review results comply with the design rules for the quantum feature map.
+            The previous idea and experimental results are provided below in the "# Previous Trial Idea and Results" section. These reflect iterative adjustments based on past trial review comments.
+
+            Review the trial results to design a quantum feature map for a more accurate QSVM. Identify the factors that contributed to performance improvement and areas for further enhancement. Finally, check whether the review results comply with the design rules for the quantum feature map.
 
             # Previous Trial Idea and Results (Trial Number: {last_trial_num})
             {last_trial_results}
@@ -85,12 +96,15 @@ class ReviewIdeaPrompt:
         last_trial_results: str,
         performance_review: str | None = None,
     ) -> tuple[dict[str, str], dict[str, str]]:
-        developer_content = self.developer_template.format(max_suggestion_num=self.max_suggestion_num)
-        if self.llm_model_version in REASONING_SERIES:
-            system_prompt = {"role": "developer", "content": developer_content}
-        else:
-            system_prompt = {"role": "system", "content": developer_content}
+        developer_content = self.developer_template.format(
+            feature_map_constraints=self.feature_map_constraints,
+            performance_metric_definition=self.performance_metric_definition,
+            input_data_constraints=self.input_data_constraints,
+            max_suggestion_num=self.max_suggestion_num,
+        )
+        developer_prompt = {"role": "developer", "content": developer_content}
+        user_prompt = self._build_user_pormpt(
+            last_trial_num, last_trial_results, performance_review
+        )
 
-        user_prompt = self._build_user_pormpt(last_trial_num, last_trial_results, performance_review)
-
-        return system_prompt, user_prompt
+        return developer_prompt, user_prompt

@@ -1,0 +1,45 @@
+description: "This is base settings for Astronaut experiment."
+
+global_settings:
+  random_seed: &global_seed 42
+  model_type: "qkernel"
+  task_type: "classification"
+
+# The dataset configuration is overwritten at runtime.
+# So you don't need to change this setting.
+# Details defined in `configs/quantum_kernel/datasets.yaml`
+dataset: null
+
+device:
+  platform: "pennylane"
+  device_name: "lightning.qubit"
+  n_qubits: 10
+  shots: null
+
+# The feature map configuration is overwritten at runtime.
+# So you don't need to change this setting.
+feature_map:
+  module_name: "astronaut.seed.quantum_kernel.feature_map"
+  implement_name: "SeedFeatureMap"
+  params: {
+    n_qubits: 10
+  }
+
+kernel:
+  module_name: "qxmt.kernels.pennylane"
+  implement_name: "FidelityKernel"
+  params: {}
+
+model:
+  name: "qsvc"
+  params:
+    C: 1.0
+    gamma:  "scale"
+
+evaluation:
+  default_metrics:
+  - "accuracy"
+  - "precision"
+  - "recall"
+  - "f1_score"
+  custom_metrics: []

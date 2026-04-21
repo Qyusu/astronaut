@@ -1,0 +1,49 @@
+description: "This is a template configuration file for the QXMT framework."
+
+global_settings:
+  random_seed: &global_seed 42
+  model_type: "vqe"
+
+hamiltonian:
+  module_name: "qxmt.hamiltonians.pennylane"
+  implement_name: "MolecularHamiltonian"
+  params: null
+
+device:
+  platform: "pennylane"
+  device_name: "lightning.qubit"
+  n_qubits: 4
+  shots: null
+  random_seed: *global_seed
+
+ansatz:
+  module_name: "astronaut.seed.vqe.ansatz"
+  implement_name: "BaseAnsatz"
+  params: null
+
+model:
+  name: "basic"
+  diff_method: "best"
+  optimizer_settings:
+    name: "scipy.SLSQP"
+    params:
+      options:
+        ftol: 1e-6
+        disp: true
+  params:
+    max_steps: 20
+    init_params:
+      type: "random"
+      min_value: 0.0
+      max_value: 0.1
+    verbose: false
+
+
+evaluation:
+  default_metrics:
+  - "final_cost"
+  - "hf_energy"
+  - "casci_energy"
+  - "casscf_energy"
+  - "fci_energy"
+  custom_metrics: []

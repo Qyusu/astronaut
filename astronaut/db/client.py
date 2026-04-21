@@ -1,5 +1,6 @@
 import re
 import time
+import traceback
 
 import tiktoken
 from loguru import logger
@@ -38,7 +39,9 @@ class PineconeClient:
         check_connection: Checks the connection to the Pinecone index
     """
 
-    def __init__(self, api_key: str, index_name: str, embed_client: EmbeddingClient) -> None:
+    def __init__(
+        self, api_key: str, index_name: str, embed_client: EmbeddingClient
+    ) -> None:
         self.pc = Pinecone(api_key=api_key)
         self.embed_client = embed_client
         self.total_cost = 0.0
@@ -56,7 +59,9 @@ class PineconeClient:
                 metric=metric,
                 spec=ServerlessSpec(cloud="aws", region="us-east-1"),
             )
-            logger.info(f"Index {self.index_name} is being created. This may take a few minutes.")
+            logger.info(
+                f"Index {self.index_name} is being created. This may take a few minutes."
+            )
             while not self.pc.describe_index(self.index_name).status["ready"]:
                 time.sleep(1)
             logger.info(f"Index {self.index_name} has been created.")
@@ -68,10 +73,15 @@ class PineconeClient:
     def _chunk_by_size(self, text: str, chunk_size: int) -> list[str]:
         tokenizer = tiktoken.get_encoding(TIKTOKEN_MODEL)
         tokens = tokenizer.encode(text)
-        chunks = [tokens[i : i + chunk_size] for i in range(0, len(tokens), chunk_size)]
+        chunks = [
+            tokens[i : i + chunk_size]
+            for i in range(0, len(tokens), chunk_size)
+        ]
         return [tokenizer.decode(chunk) for chunk in chunks]
 
-    def _chunk_by_sentence_and_size(self, text: str, chunk_size: int) -> list[str]:
+    def _chunk_by_sentence_and_size(
+        self, text: str, chunk_size: int
+    ) -> list[str]:
         tokenizer = tiktoken.get_encoding(TIKTOKEN_MODEL)
         sentences = re.split(r"(?<=[.!?])\s+", text)  # splite by sentence
         chunks = []
@@ -104,8 +114,10 @@ class PineconeClient:
             raise ValueError("Index is not created.")
 
         existing_data = self.index.fetch(ids=[document_id])
-        if (not allow_update) and (existing_data.get("vectors")):
-            logger.error(f"Document {document_id} already exists in the index. Not upserted.")
+        if (not allow_update) and (existing_data.vectors):
+            logger.error(
+                f"Document {document_id} already exists in the index. Not upserted."
+            )
             return None
 
         if chunk_method == "size":
@@ -119,25 +131,49 @@ class PineconeClient:
         self.total_cost += cost
         chunk_list = []
         for c_id, (c_text, c_vector) in enumerate(zip(chunks, chunks_vector)):
-            metadata = metadata | ({"chunk_text": "".join(c_text), "chunk_id": c_id})
+            metadata = metadata | (
+                {"chunk_text": "".join(c_text), "chunk_id": c_id}
+            )
             chunk_list.append((f"{document_id}_{c_id}", c_vector, metadata))
             if len(chunk_list) == 100:  # upsert every 100 chunks
                 self.index.upsert(chunk_list)
                 chunk_list = []
         self.index.upsert(chunk_list)
-        logger.info(f"Document {document_id} has been upserted. Total {len(chunks)} chunks.")
+        logger.info(
+            f"Document {document_id} has been upserted. Total {len(chunks)} chunks."
+        )
 
-    def query(self, text: str, top_k: int = 5, metadata_filter: dict = {}) -> QueryResponse:
+    def delete_document(self, document_id_prefix: str) -> None:
+        if self.index is None:
+            raise ValueError("Index is not created.")
+
+        for ids in self.index.list(prefix=document_id_prefix):
+            self.index.delete(ids=ids)
+
+        logger.info(
+            f"All records of document prefix {document_id_prefix} have been deleted. Total {len(ids)} records."
+        )
+
+    def query(
+        self, text: str, top_k: int = 5, metadata_filter: dict = {}
+    ) -> QueryResponse:
         if self.index is None:
             raise ValueError("Index is not created.")
 
         vector, cost = self.embed_client.embeddings([text])
         self.total_cost += cost
-        response = self.index.query(vector=vector[0], top_k=top_k, include_metadata=True, filter=metadata_filter)
+        response = self.index.query(
+            vector=vector[0],
+            top_k=top_k,
+            include_metadata=True,
+            filter=metadata_filter,
+        )
         if isinstance(response, QueryResponse):
             return response
         else:
-            raise TypeError("Expected QueryResponse, got {type(response).__name__}")
+            raise TypeError(
+                "Expected QueryResponse, got {type(response).__name__}"
+            )
 
     def delete_index(self, index_name: str) -> None:
         exist_index_names = [index["name"] for index in self.pc.list_indexes()]
@@ -154,10 +190,13 @@ class PineconeClient:
                 logger.error("Index is not created.")
                 return False
 
-            index_stats = str(self.index.describe_index_stats()).replace("\n", " ")
+            index_stats = str(self.index.describe_index_stats()).replace(
+                "\n", " "
+            )
             logger.info(f'Index "{self.index_name}" is connected.')
             logger.info(f"Index stats: {index_stats}")
             return True
         except Exception as e:
+            logger.debug(traceback.format_exc())
             logger.error(f"Connection check failed: {str(e)}")
             return False

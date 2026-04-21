@@ -5,6 +5,7 @@ from typing import Any
 
 class StrategyType(Enum):
     QUANTUM_KERNEL = auto()
+    VQE = auto()
 
 
 class QuantumStrategy(ABC):
