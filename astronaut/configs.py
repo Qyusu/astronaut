@@ -1,13 +1,101 @@
 import os
+from typing import Any, Literal
 
+import yaml
+from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+import astronaut.constants as exp_const
+from astronaut.logics.common import ReviewMetric
+from astronaut.schema import ReflectionType, ResearchMode
+
 ENV_NONE_PATTERN = ["None", "NONE", "none", ""]
+LOG_LEVEL = Literal[
+    "TRACE", "DEBUG", "INFO", "SUCCESS", "WARNING", "ERROR", "CRITICAL"
+]
+MODEL_TYPE = Literal["quantum_kernel", "vqe"]
+
+
+class ExperimentSettings(BaseModel):
+    task_type: MODEL_TYPE = Field(
+        description="Specify the task type from 'quantum_kernel' or 'vqe'."
+    )
+
+    dataset_config_path: str | None = Field(
+        default="configs/datasets.yaml",
+        description="Optional path to dataset config yaml file.",
+    )
+    validation_qubits: list[int] = Field(
+        default=[],
+        description="Specify the list of qubit numbers for validation.",
+    )
+    experiment_name: str = Field(
+        description="Specify the name of the experiment."
+    )
+    desc: str = Field(
+        default="Automatically generated quantum circuit.",
+        description="Specify the description of the experiment.",
+    )
+    max_trial_num: int = Field(
+        default=exp_const.DEFAULT_MAX_TRIAL_NUM,
+        description="Specify the maximum number of trials to run.",
+    )
+    max_idea_num: int = Field(
+        default=exp_const.DEFAULT_MAX_IDEA_NUM,
+        description="Specify the maximum number of ideas to generate at one trial in the generation component.",
+    )
+    max_suggestion_num: int = Field(
+        default=exp_const.DEFAULT_MAX_SUGGESTION_NUM,
+        description="Specify the maximum number of suggestions during idea review.",
+    )
+    expanding_steps: list[int] = Field(
+        default=exp_const.DEFAULT_EXPANDING_STEPS,
+        description="Specify the number of ideas for each steps of expanding.",
+    )
+    research_mode: ResearchMode = Field(
+        default=ResearchMode.NONE,
+        description="Specify the type of deep research mode for seed idea generation (NONE, DEEP, LIGHT).",
+    )
+    existing_research_report_path: str | None = Field(
+        default=None,
+        description="Optional path to existing research report markdown file. If provided, the research step will be skipped and this file will be used instead.",
+    )
+    reflection_type: ReflectionType = Field(
+        default=ReflectionType.NONE,
+        description="Specify the type of reflection to use (NONE, SELF, DEBATE).",
+    )
+    max_reflection_round: int = Field(
+        default=exp_const.DEFAULT_MAX_REFLECTION_ROUND,
+        description="Specify the maximum number of reflection rounds during idea refinement.",
+    )
+    max_scoring_round: int = Field(
+        default=exp_const.DEFAULT_MAX_SCORING_ROUND,
+        description="Specify the maximum number of scoring rounds during idea evaluation.",
+    )
+    review_metric: ReviewMetric = Field(
+        default=ReviewMetric.NONE,
+        description="Specify the review metric to cacluate review direction.",
+    )
+    log_level: LOG_LEVEL = Field(
+        default="DEBUG",
+        description="Specify the log level for the log file (TRACE, DEBUG, INFO, SUCCESS, WARNING, ERROR, CRITICAL).",
+    )
+    console_log_level: LOG_LEVEL = Field(
+        default="INFO",
+        description="Specify the log level for console output (TRACE, DEBUG, INFO, SUCCESS, WARNING, ERROR, CRITICAL).",
+    )
+
+    @classmethod
+    def from_yaml(cls, path: str) -> "ExperimentSettings":
+        with open(path, "r") as f:
+            data = yaml.safe_load(f) or {}
+
+        return cls(**data)
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file="../.env",
+        env_file=f"{exp_const.MODULE_HOME}/.env",
         env_file_encoding="utf-8",
     )
 
@@ -18,16 +106,17 @@ class Settings(BaseSettings):
 
     # Chat setting
     CHAT_PLATFORM: str = "openai"
-    DEFAULT_MODEL_VERSION: str = "gpt-4.1-2025-04-14"
-    DEFAULT_REASONING_MODEL_VERSION: str = "o4-mini-2025-04-16"
+    DEFAULT_LIGHT_MODEL_VERSION: str = "gpt-5-mini-2025-08-07"
+    DEFAULT_MODEL_VERSION: str = "gpt-5-2025-08-07"
+    EXPANDING_MODEL_VERSION: str = ""
     IDEA_MODEL_VERSION: str = ""
     SCORING_MODEL_VERSION: str = ""
     SUMMARY_MODEL_VERSION: str = ""
+    EXPERT_MODEL_VERSION: str = ""
     REFLECTION_MODEL_VERSION: str = ""
+    REFERENCE_EXTRACTION_MODEL_VERSION: str = ""
     CODE_MODEL_VERSION: str = ""
-    VALIDATION_MODEL_VERSION: str = ""
     REVIEW_MODEL_VERSION: str = ""
-    PARSER_MODEL_VERSION: str = ""
 
     # Embedding setting
     EMBEDDING_PLATFORM: str = "openai"
@@ -39,48 +128,58 @@ class Settings(BaseSettings):
     PENNLYLANE_INDEX_NAME: str | None = None
     ARXIV_INDEX_NAME: str | None = None
 
-    # Local paper setting
-    LOCAL_PAPER_DIR: str | None = None
-
     # LangSmith setting
     LANGCHAIN_TRACING_V2: str = ""
     LANGCHAIN_ENDPOINT: str = ""
     LANGCHAIN_API_KEY: str = ""
     LANGCHAIN_PROJECT: str = ""
 
-    def __init__(self, **kwargs) -> None:
+    def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
+        if not self.EXPANDING_MODEL_VERSION:
+            self.EXPANDING_MODEL_VERSION = self.DEFAULT_MODEL_VERSION
         if not self.IDEA_MODEL_VERSION:
-            self.IDEA_MODEL_VERSION = self.DEFAULT_REASONING_MODEL_VERSION
+            self.IDEA_MODEL_VERSION = self.DEFAULT_MODEL_VERSION
         if not self.SCORING_MODEL_VERSION:
-            self.SCORING_MODEL_VERSION = self.DEFAULT_MODEL_VERSION
+            self.SCORING_MODEL_VERSION = self.DEFAULT_LIGHT_MODEL_VERSION
         if not self.SUMMARY_MODEL_VERSION:
-            self.SUMMARY_MODEL_VERSION = self.DEFAULT_MODEL_VERSION
+            self.SUMMARY_MODEL_VERSION = self.DEFAULT_LIGHT_MODEL_VERSION
+        if not self.EXPERT_MODEL_VERSION:
+            self.EXPERT_MODEL_VERSION = self.DEFAULT_LIGHT_MODEL_VERSION
         if not self.REFLECTION_MODEL_VERSION:
-            self.REFLECTION_MODEL_VERSION = self.DEFAULT_REASONING_MODEL_VERSION
+            self.REFLECTION_MODEL_VERSION = self.DEFAULT_MODEL_VERSION
+        if not self.REFERENCE_EXTRACTION_MODEL_VERSION:
+            self.REFERENCE_EXTRACTION_MODEL_VERSION = (
+                self.DEFAULT_LIGHT_MODEL_VERSION
+            )
         if not self.CODE_MODEL_VERSION:
-            self.CODE_MODEL_VERSION = self.DEFAULT_REASONING_MODEL_VERSION
-        if not self.VALIDATION_MODEL_VERSION:
-            self.VALIDATION_MODEL_VERSION = self.DEFAULT_MODEL_VERSION
+            self.CODE_MODEL_VERSION = self.DEFAULT_MODEL_VERSION
         if not self.REVIEW_MODEL_VERSION:
-            self.REVIEW_MODEL_VERSION = self.DEFAULT_REASONING_MODEL_VERSION
-        if not self.PARSER_MODEL_VERSION:
-            self.PARSER_MODEL_VERSION = self.DEFAULT_MODEL_VERSION
+            self.REVIEW_MODEL_VERSION = self.DEFAULT_MODEL_VERSION
 
-        if not self.EMBEDDING_MODEL_VERSION or self.EMBEDDING_MODEL_VERSION in ENV_NONE_PATTERN:
+        if (
+            not self.EMBEDDING_MODEL_VERSION
+            or self.EMBEDDING_MODEL_VERSION in ENV_NONE_PATTERN
+        ):
             self.EMBEDDING_MODEL_VERSION = None
 
-        if not self.PINECONE_API_KEY or self.PINECONE_API_KEY in ENV_NONE_PATTERN:
+        if (
+            not self.PINECONE_API_KEY
+            or self.PINECONE_API_KEY in ENV_NONE_PATTERN
+        ):
             self.PINECONE_API_KEY = None
 
-        if not self.PENNLYLANE_INDEX_NAME or self.PENNLYLANE_INDEX_NAME in ENV_NONE_PATTERN:
+        if (
+            not self.PENNLYLANE_INDEX_NAME
+            or self.PENNLYLANE_INDEX_NAME in ENV_NONE_PATTERN
+        ):
             self.PENNLYLANE_INDEX_NAME = None
 
-        if not self.ARXIV_INDEX_NAME or self.ARXIV_INDEX_NAME in ENV_NONE_PATTERN:
+        if (
+            not self.ARXIV_INDEX_NAME
+            or self.ARXIV_INDEX_NAME in ENV_NONE_PATTERN
+        ):
             self.ARXIV_INDEX_NAME = None
-
-        if not self.LOCAL_PAPER_DIR or self.LOCAL_PAPER_DIR in ENV_NONE_PATTERN:
-            self.LOCAL_PAPER_DIR = None
 
 
 settings = Settings()

@@ -1,5 +1,4 @@
 import numpy as np
-import pennylane as qml
 from qxmt.constants import PENNYLANE_PLATFORM
 from qxmt.feature_maps import BaseFeatureMap
 
@@ -28,10 +27,10 @@ class SeedFeatureMap(BaseFeatureMap):
 
     def feature_map(self, x: np.ndarray) -> None:
         """Create quantum circuit of feature map.
-        The input data is a sample of MNIST image data. It is decomposed into 80 features by PCA.
+        The input data is a single feature vector.
 
         Args:
-            x (np.ndarray): input data shape is (80,).
+            x (np.ndarray): single feature vector
         """
-        # define your quantum feature map here
+        # define your quantum feature map below this line
         pass

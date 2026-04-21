@@ -2,57 +2,59 @@
 
 from textwrap import dedent
 
-from astronaut.constants import PENNYLANE_VERSION, REASONING_SERIES
-from astronaut.prompts.pennylane_operations import get_pennylane_operations
+from astronaut.prompts.quantum_kernel.constraints import (
+    FEATURE_MAP_CONSTRAINTS,
+    INPUT_DATA_CONSTRAINTS,
+    PERFORMANCE_METRIC_DEFINITION,
+)
 
 
-class GenerateFeatureMapIdeaPrompt:
+class BaseGenerateFeatureMapIdeaPrompt:
     def __init__(
         self,
-        llm_model_version: str,
-        max_trial_num: int,
-        trial_num: int,
-        idea_num: int,
-        best_idea_abstract: str,
-        device_n_qubit: int,
+        feature_map_constraints: str = FEATURE_MAP_CONSTRAINTS.strip(),
+        performance_metric_definition: str = PERFORMANCE_METRIC_DEFINITION.strip(),
+        input_data_constraints: str = INPUT_DATA_CONSTRAINTS.strip(),
     ) -> None:
-        self.llm_model_version = llm_model_version
-        self.max_trial_num = max_trial_num
-        self.trial_num = trial_num
-        self.idea_num = idea_num
-        self.best_idea_abstract = best_idea_abstract
-        self.device_n_qubit = device_n_qubit
+        self.feature_map_constraints = feature_map_constraints
+        self.performance_metric_definition = performance_metric_definition
+        self.input_data_constraints = input_data_constraints
 
         self.developer_template = dedent(
             """
+            # Role
             You are a quantum computing expert specializing in designing Quantum Feature Maps for classification tasks using a Quantum Support Vector Machine (QSVM).
 
-            Your task is to create a quantum feature map that will serve as the kernel function in a QSVM classifier applied to MNIST data. The ultimate goal is to design a feature map that enables the classifier to achieve high accuracy in classification.
 
-            This task will follow an iterative improvement process, where the feature map design is refined based on review comments provided after each iteration. Use the feedback to enhance the design while maintaining alignment with the defined objectives and constraints.
+            # Task and Objective
+            Your task is to create a quantum feature map that will serve as the kernel function in a QSVM classifier, with the objective to **maximize performance metric**. Ideas are improved incrementally through multiple trials and their feedback results. Your strategy should adapt based on the user's instructions:
 
-            # Task Definition
-            Develop multiple ideas for quantum feature maps that satisfy the following criteria. The feature maps will be used to compute the quantum kernel K(x, x') = |⟨Φ(x)|Φ(x')⟩|^2 for a QSVM. Ensure the designs are tailored to this kernel computation.
-            1. **Design Considerations**:
-                - Define combinations of quantum gates.
-                - Define an entanglement pattern for the features.
-                - Specify the method for embedding input data and quantum states as rotation angles of quantum gates.
-                - Ensure the 80-dimensional input data is utilized effectively, minimizing any loss of information.
-                    - Avoid excessive feature compression that may lead to information loss (e.g., simple feature averaging, summing, etc.).
-            2. **Restrictions on Encoding and Embedding**:
-                - Only **linear functions** are allowed for encoding and embedding.
-                - All parameters in the encoding and embedding must be **non-trainable**.
+            - **Exploration strategy**: When instructed to explore, or during early trials, conduct broad exploration across diverse architecture-level approaches to identify promising directions.
+            - **Refinement strategy**: When instructed to refine, use feedback from previous trials to gradually narrow idea diversity and focus on specific improvements to achieve high performance.
 
-            ## Key Context
-            - The input data, originally represented as 784-dimensional image data, has been compressed to 80 dimensions using PCA and each value normalized to the range [0.0, 1.0].
-            - Propose a quantum feature map that is independent of the number of qubits in the quantum device.
+            Follow the user's explicit instructions regarding which strategy to employ for the current trial. After generating ideas, please ensure that you verify whether the constraint conditions are satisfied.
 
-            ## Iterative Design
-            - You will refine this feature map over {max_trial_num} total trials.
-            - Each trial, you'll receive evaluation feedback to help evolve the design.
-            - In subsequent trials, the primary goal is to improve classification accuracy based on the feedback provided, while maintaining or improving the feature map's fidelity and computational feasibility.
-            
-            ## Output Format
+
+            # Feature Map Constraints
+            {feature_map_constraints}
+
+            # Performance Metric Definition
+            {performance_metric_definition}
+
+            # Input Data Constraints
+            {input_data_constraints}
+
+
+            # Experiment Feedback Guidelines
+            - The feedback includes the following:
+                - **Keep Points:** Aspects of the previous design that should be retained.
+                - **Suggestions:** Areas for improvement or new directions to explore.
+            - Variety in Approaches:
+                - You are not required to address all feedback points in a single idea.
+                - Ensure that the multiple ideas generated based on the review incorporate different directions of improvement, maintaining diversity.
+
+
+            # Output Format
             results: [idea_1, idea_2, ..., idea_n]
             Each idea should be structured as follows:
                 - explanation: A detailed explanation of the proposed feature map. Include design rationale, expected outcomes, and quantum gates used.
@@ -61,174 +63,199 @@ class GenerateFeatureMapIdeaPrompt:
                 - name: A descriptive name for your feature map.
                 - key_sentences: Up to 5 key sentences, each 50-100 words, that describe the essential aspects of your design for subsequent vector-based searching.
 
-            ## Important Notes
+
+            # Important Notes
             - Clarity is paramount. Reiterate points if necessary to ensure understanding. There is no length restriction on the explanation—ensure all relevant details are provided.
-            - Evaluation is performed using an ideal quantum simulator without noise, so hardware noise does not need to be considered.
             """
         )
 
-    def _build_user_prompt(self, review_comment: str) -> dict[str, str]:
-        if self.trial_num == 1:
-            template = dedent(
-                """
-                Trial {current_trial}/{max_trial_num}.
-
-                This is the **first trial** of the quantum feature map design task.  
-                For this initial trial:  
-                - Focus on designing high-accuracy quantum feature maps while exploring diverse approaches to feature map design.
-                - Ensure the designs align with the following constraints:
-                    1. The idea itself must be a feature map that is independent of the number of qubits in the quantum device, but evaluation will be conducted using an {device_n_qubit}-qubit simulator.
-                    2. The input data consists of **80-dimensional PCA-reduced MNIST data**, with each value normalized to the range [0.0, 1.0].
-                    3. The encoding method is restricted to **non-trainable parameters** and **linear functions**.
-                    4. Ensure effective utilization of the 80-dimensional input data while minimizing information loss.
-                        - Avoid excessive feature compression that may lead to information loss (e.g., simple feature averaging, summing, etc.).
-
-                ### Key Objective
-                Create **{idea_num} high-accuracy quantum feature map ideas** that explore diverse directions and can serve as strong foundations for refinement in future trials.
-                """
-            )
-            user_prompt = template.format(
-                current_trial=self.trial_num,
-                max_trial_num=self.max_trial_num,
-                device_n_qubit=self.device_n_qubit,
-                idea_num=self.idea_num,
-            )
-
-        else:
-            template = dedent(
-                """
-                Trial {current_trial}/{max_trial_num}.
-
-                ### Feedback from the Previous Trial (Trial {previous_trial})
-                {review_comment}
-
-                ### Task for This Trial
-                Based on the feedback provided above, refine your quantum feature map ideas and generate a total of **{idea_num} improved ideas**. These ideas should aim to enhance the classification accuracy.
-
-                ### Key Guidelines
-                - The feedback includes the following:  
-                    - **Keep Points:** Aspects of the previous design that should be retained.  
-                    - **Suggestions:** Areas for improvement or new directions to explore.  
-
-                - Variety in Approaches:  
-                    - You are not required to address all feedback points in a single idea.
-                    - Ensure that the multiple ideas generated based on the review incorporate different directions of improvement, maintaining diversity.
-
-                ### Primary Objective
-                The primary goal in this trial is to **boost classification accuracy** through iterative refinements while ensuring the designs align with the constraints.
-                """
-            )
-            user_prompt = template.format(
-                current_trial=self.trial_num,
-                max_trial_num=self.max_trial_num,
-                previous_trial=self.trial_num - 1,
-                review_comment=review_comment.strip(),
-                idea_num=self.idea_num,
-            )
-
-        return {"role": "user", "content": user_prompt}
-
-    def build(self, review_comment: str) -> tuple[dict[str, str], dict[str, str]]:
-        developer_content = self.developer_template.format(max_trial_num=self.max_trial_num)
-        if self.llm_model_version in REASONING_SERIES:
-            system_prompt = {"role": "developer", "content": developer_content}
-        else:
-            system_prompt = {"role": "system", "content": developer_content}
-
-        user_prompt = self._build_user_prompt(review_comment)
-
-        return system_prompt, user_prompt
-
-
-class ReflectionFeatureMapIdeaPrompt:
-    def __init__(self, llm_model_version: str) -> None:
-        self.llm_model_version = llm_model_version
-        self.developer_template = dedent(
-            """
-            You are a professor with extensive expertise in **quantum computing** and **machine learning**, particularly in scientific research.
-
-            Your task is to **evaluate quantum machine learning ideas** from multiple perspectives, incorporating insights from recent academic papers and best practices. Focus on refining each idea to improve its accuracy and effectiveness based on the latest advancements, while preserving the idea's core structure.
-
-            ### Notes
-            - **Incorporate recent advancements:** Utilize relevant developments in quantum technology and machine learning where applicable to enhance the evaluation.
-            - **Provide balanced evaluations:** While not all perspectives will apply equally to every idea, strive to deliver a thorough and well-rounded assessment.
-            - **Design considerations:** Restrict encoding to **non-trainable parameters** and **linear functions**.
-            - **Focus on research-supported improvements:** Suggest refinements supported by related research, without making fundamental changes to the core concept of the idea.
-            - **Retain original content when no changes are required:** If no modifications are needed, keep the content of each tag unchanged and include it as-is in the output.
-            """
+    def _build_developer_prompt(self) -> dict[str, str]:
+        developer_content = self.developer_template.format(
+            feature_map_constraints=self.feature_map_constraints,
+            performance_metric_definition=self.performance_metric_definition,
+            input_data_constraints=self.input_data_constraints,
         )
+        return {"role": "developer", "content": developer_content}
 
-    def _build_user_pormpt(
-        self, current_round: int, max_reflection_round: int, previous_idea: str, previous_score: str, related_work: str
+
+class ResearchBasedFeatureMapIdeaPrompt(BaseGenerateFeatureMapIdeaPrompt):
+    def _build_user_prompt(
+        self, idea_num: int, research_report: str
     ) -> dict[str, str]:
         template = dedent(
             """
-            Round {current_round}/{max_reflection_round}.
+            Based on the comprehensive research report provided below, generate **{idea_num} diverse and innovative quantum feature map ideas** for QSVM.
 
-            Carefully review the idea provided in the "# Previous Idea" section, along with its score from the "# First Round Score" section. If the "# Related Work" section contains relevant academic papers (not marked as "NOT PROVIDED"), take these insights into account during your evaluation. Otherwise, rely solely on your internal knowledge to evaluate and refine the idea.
-            
-            After your analysis and evaluation:
-            - Refine and improve the idea for high-accuracy where appropriate, ensuring that the **core concept remains unchanged**.
-            - If no modifications are required, retain the following tags as-is: `feature_map_name`, `summary`, `explanation`, `formula`, and `key_sentences`.
-            - In cases where no changes are necessary, set the `is_completed` tag to **True** in your output.
+            Please ensure that your ideas are innovative and not simply straightforward combinations of established methods from existing research. While it is perfectly acceptable to evolve and build upon existing techniques, aim for creative and novel approaches that push beyond conventional frameworks.
 
-            # Previous Idea
-            {previous_idea}
+            In this stage, adopt the **Exploration strategy**: focus on exploring a wide range of ideas based on the research report to determine future improvement directions, rather than aiming for high performance.
 
-            # First Round Score:
-            {previous_score}
-
-            # Related Work
-            {related_work}
+            # Research Report
+            {research_report}
             """
         )
         user_prompt = template.format(
-            current_round=current_round,
-            max_reflection_round=max_reflection_round,
-            previous_idea=previous_idea,
-            previous_score=previous_score,
-            related_work=related_work,
+            idea_num=idea_num,
+            research_report=research_report.strip(),
         )
+        return {"role": "user", "content": user_prompt}
+
+    def build(
+        self, idea_num: int, research_report: str
+    ) -> tuple[dict[str, str], dict[str, str]]:
+        developer_prompt = self._build_developer_prompt()
+        user_prompt = self._build_user_prompt(idea_num, research_report)
+        return developer_prompt, user_prompt
+
+
+class ExpandingFeatureMapIdeaPrompt(BaseGenerateFeatureMapIdeaPrompt):
+    def _build_user_prompt(
+        self, idea_num: int, experiment_report: str
+    ) -> dict[str, str]:
+        template = dedent(
+            """
+            Based on the experiment report provided below, generate **{idea_num} improved quantum feature map ideas** for QSVM. When generating ideas, analyze the success and failure of the previous ideas that provided in the report.
+
+            When referencing previous ideas in your explanation, please avoid using numbered references like 'Idea 1' and instead provide specific quoted content from the referenced ideas.
+
+            In this stage, adopt the **Exploration strategy**: focus on identifying potential for future improvements and enhancing the comprehensiveness of exploration directions.
+
+            # Experiment Report
+            {experiment_report}
+            """
+        )
+        user_prompt = template.format(
+            idea_num=idea_num,
+            experiment_report=experiment_report.strip(),
+        )
+        return {"role": "user", "content": user_prompt}
+
+    def build(
+        self, idea_num: int, experiment_report: str
+    ) -> tuple[dict[str, str], dict[str, str]]:
+        developer_prompt = self._build_developer_prompt()
+        user_prompt = self._build_user_prompt(idea_num, experiment_report)
+        return developer_prompt, user_prompt
+
+
+class FeedbackBasedFeatureMapIdeaPrompt(BaseGenerateFeatureMapIdeaPrompt):
+    def _no_feedback_user_prompt(
+        self, current_trial_num: int, max_trial_num: int, idea_num: int
+    ) -> str:
+        template = dedent(
+            """
+            Trial {current_trial_num}/{max_trial_num}.
+
+            Generate **{idea_num} initial ideas** for quantum feature map design for QSVM.
+            """
+        )
+        user_prompt = template.format(
+            current_trial_num=current_trial_num,
+            max_trial_num=max_trial_num,
+            idea_num=idea_num,
+        )
+
+        return user_prompt
+
+    def _with_feedback_user_prompt(
+        self,
+        current_trial_num: int,
+        max_trial_num: int,
+        idea_num: int,
+        review_comment: str,
+        seed_ideas: str | None,
+    ) -> str:
+        template = dedent(
+            """
+            Trial {current_trial_num}/{max_trial_num}.
+
+            Based on the feedback from the previous trial, refine your quantum feature map ideas for QSVM and generate a total of **{idea_num} improved ideas**.
+
+            In this stage, adopt the **Refinement strategy**: through feedback from multiple trials, gradually narrow the exploration scope to generate high performance feature map ideas. If you identify necessary improvements beyond the comments provided in the feedback, please incorporate them into your ideas.
+
+            ## Feedback from the Previous Trial
+            {review_comment}
+            """
+        )
+        user_prompt = template.format(
+            current_trial_num=current_trial_num,
+            max_trial_num=max_trial_num,
+            idea_num=idea_num,
+            review_comment=review_comment.strip(),
+        )
+
+        if seed_ideas:
+            user_prompt += f"\n\n# Seed Ideas\nThis is first trial, so provided feedback is below multiple seed ideas:\n{seed_ideas}"
+
+        return user_prompt
+
+    def _build_user_prompt(
+        self,
+        current_trial_num: int,
+        max_trial_num: int,
+        idea_num: int,
+        review_comment: str,
+        seed_ideas: str | None,
+    ) -> dict[str, str]:
+        if review_comment == "":
+            # This pattern only used in first trial when research_mode == "none"
+            user_prompt = self._no_feedback_user_prompt(
+                current_trial_num, max_trial_num, idea_num
+            )
+        else:
+            user_prompt = self._with_feedback_user_prompt(
+                current_trial_num,
+                max_trial_num,
+                idea_num,
+                review_comment,
+                seed_ideas,
+            )
 
         return {"role": "user", "content": user_prompt}
 
     def build(
-        self, current_round: int, max_reflection_round: int, previous_idea: str, previous_score: str, related_work: str
+        self,
+        current_trial_num: int,
+        max_trial_num: int,
+        idea_num: int,
+        review_comment: str,
+        seed_ideas: str | None = None,
     ) -> tuple[dict[str, str], dict[str, str]]:
-        if self.llm_model_version in REASONING_SERIES:
-            system_prompt = {"role": "developer", "content": self.developer_template}
-        else:
-            system_prompt = {"role": "system", "content": self.developer_template}
-
-        user_prompt = self._build_user_pormpt(
-            current_round,
-            max_reflection_round,
-            previous_idea,
-            previous_score,
-            related_work,
+        developer_prompt = self._build_developer_prompt()
+        user_prompt = self._build_user_prompt(
+            current_trial_num,
+            max_trial_num,
+            idea_num,
+            review_comment,
+            seed_ideas,
         )
-
-        return system_prompt, user_prompt
+        return developer_prompt, user_prompt
 
 
 class GenerateFeatureMapCodePrompt:
     def __init__(
-        self, code: str, idea: str, llm_model_version: str, pennylane_version: str = PENNYLANE_VERSION
+        self,
+        code: str,
+        idea: str,
+        pennylane_reference: str,
+        input_data_constraints: str = INPUT_DATA_CONSTRAINTS.strip(),
     ) -> None:
         self.code = code
         self.idea = idea
-        self.llm_model_version = llm_model_version
-        self.pennylane_version = pennylane_version
+        self.pennylane_reference = pennylane_reference
+        self.input_data_constraints = input_data_constraints
 
-        self.developer_tempalte = dedent(
-            """
+        self.developer_template = dedent(
+            f"""
+            # Role
             You are an expert Python programmer specializing in quantum computing with extensive knowledge of the PennyLane library.
 
-            # Task Definition
-            Your task is to implement ideas for quantum feature maps in Python code using the PennyLane library. The available operations in PennyLane are listed under the "# Available PennyLane Operations" section.
+            # Task
+            Your task is to implement ideas for quantum feature maps in Python code using the PennyLane library. The implementation should be independent of the number of qubits and work dynamically with any qubit count.
 
             # Input Data
-            The `feature_map` method receives the input data `x`, which represents one sample of the dataset. This input is an 80-dimensional NumPy array with the shape `(80,)`. Each value already normalized to the range [0.0, 1.0].
+            The `feature_map` method receives the input data `x`, which represents one sample as a NumPy array.
+            {input_data_constraints}
 
             # Key Guidelines:
             1. **Base Code Format**:
@@ -238,11 +265,16 @@ class GenerateFeatureMapCodePrompt:
                     ```
                 - Do not change method names or the overall structure of the base code.
                 - Do not include any operations for measuring quantum states, such as qml.exp or qml.measure, etc
-                - All hyperparameters (e.g., reps, c, etc.) must be defined as arguments in the __init__ method of the BaseFeatureMap class. 
+                - Implement the feature map to work with any number of qubits. The implementation should be flexible and scalable to handle different qubit counts dynamically.
 
-            2. **Initialization Parameters**: 
-                - When defining hyperparameters other than "self" and "n_qubits", always set default values.
-                - If the default value becomes complex, define it as None and set it in the __init__ method. In this case, instead of raising an error, set an initial value that is appropriate for the design of the idea.
+            2. **Initialization Parameters**:
+                - **Core Parameters Only**: Only include essential parameters that significantly impact model performance and require hyperparameter tuning in the __init__ method:
+                    * Parameters controlling circuit depth or repetition counts
+                    * Parameters controlling encoding strength or coefficients
+                    * Key parameters that determine quantum circuit structure
+                    * Parameters that need to be adjusted based on dataset or problem settings
+                - Non-essential numerical constants and auxiliary settings should be defined as fixed values within the class body, not as __init__ arguments.
+                - When defining hyperparameters other than "self" and "n_qubits", always set default values. If the default value becomes complex, define it as None and set it in the __init__ method. In this case, instead of raising an error, set an initial value that is appropriate for the design of the idea.
 
             3. **Imports and Libraries**:
                 - Include all necessary import libraries.
@@ -252,15 +284,6 @@ class GenerateFeatureMapCodePrompt:
                 - Use clear and consistent **argument names** and include **type hints** for all methods.
                 - Add relevant **comments** to explain the purpose and functionality of the code.
                 - Ensure that the generated code is **executable with PennyLane**.
-
-            5. **PennyLane Operations**:
-                - Limit your implementation to the operations listed under the "# Available PennyLane Operations" section.
-                - Each PennyLane operation should be explicitly assigned argument names.
-
-            # Available PennyLane Operations
-            {pennylane_operations}
-
-            ---
 
             # Output Format
             Implement result should be structured as follows:
@@ -273,86 +296,34 @@ class GenerateFeatureMapCodePrompt:
             """
         )
 
-    def _build_user_pormpt(self) -> dict[str, str]:
+    def _build_user_prompt(self) -> dict[str, str]:
         template = dedent(
             """
-            Please implement a quantum feature map based on the designs described in the "# Idea" section by extending the `BaseFeatureMap` class using PennyLane code. The idea is based on the assumption that it does not depend on the number of qubits. However, the generated code will be executed on a 10-qubit simulator. In addition, please set default values for all arguments required when creating an instance, and implement initialization processing as needed.
+            Please implement a quantum feature map based on the designs described in the "# Idea" section by extending the `BaseFeatureMap` class using PennyLane code. The idea is based on the assumption that it does not depend on the number of qubits, but performance evaluation will be conducted on a 10-qubit noiseless simulator (i.e., n_qubits = 10). In addition, please set default values for all arguments required when creating an instance, and implement initialization processing as needed. Set the default parameters to values expected to yield high accuracy by leveraging the specific characteristics and design principles of your feature map.
 
             # Idea
             {idea}
+
+            # PennyLane Reference
+            When implementing code, each PennyLane operation should be explicitly assigned argument names.
+            {pennylane_reference}
             """
         )
 
         return {
             "role": "user",
-            "content": template.format(idea=self.idea.strip()),
-        }
-
-    def build(self) -> tuple[dict[str, str], dict[str, str]]:
-        developer_content = self.developer_tempalte.format(
-            code=self.code, pennylane_operations=get_pennylane_operations(self.pennylane_version)
-        )
-        if self.llm_model_version in REASONING_SERIES:
-            system_prompt = {"role": "developer", "content": developer_content}
-        else:
-            system_prompt = {"role": "system", "content": developer_content}
-
-        user_prompt = self._build_user_pormpt()
-
-        return system_prompt, user_prompt
-
-
-class RetryGenerateFeatureMapCodePrompt:
-    def __init__(self, code: str, error_messages: list[str], warning_messages: list[str]) -> None:
-        self.code = code
-        self.error_messages_string = (
-            "- " + "\n- ".join(error_messages) if len(error_messages) > 0 else "Errors not found."
-        )
-        self.warning_messages_string = (
-            "- " + "\n- ".join(warning_messages) if len(warning_messages) > 0 else "Warnings not found."
-        )
-
-        self.system_prompt = {
-            "role": "system",
-            "content": dedent(
-                """
-                You are an expert qunatum computing software engineer skilled in designing quantum feature maps using the PennyLane library in Python.
-
-                ## Task Definition
-                You are tasked with fixing the errors and warnings in the quantum feature map code provided by the user.
-                Your task is only fix errors abd warnings. Do not change the logic or structure of the code.
-                """
-            ),
-        }
-
-        tempalte = dedent(
-            """
-            Please correct the following errors in the quantum feature map code.
-
-            ## Code:
-            {code}
-
-            ## Errors
-            {error_messages_string}
-
-            ## Warnings
-            {warning_messages_string}
-
-            # Output Format
-            Make sure the code follows the same structure as the base code provided and is formatted in the following JSON format:
-            - class_name: Name of the generated feature map class
-            - params: dictionary of parameters for the feature map class
-            - code: generated feature map code
-            """
-        )
-        self.user_prompt = {
-            "role": "user",
-            "content": tempalte.format(
-                code=self.code,
-                error_messages_string=self.error_messages_string,
-                warning_messages_string=self.warning_messages_string,
+            "content": template.format(
+                idea=self.idea.strip(),
+                pennylane_reference=self.pennylane_reference,
             ),
         }
 
     def build(self) -> tuple[dict[str, str], dict[str, str]]:
-        return self.system_prompt, self.user_prompt
+        developer_content = self.developer_template.format(
+            code=self.code,
+            input_data_constraints=self.input_data_constraints,
+        )
+        developer_prompt = {"role": "developer", "content": developer_content}
+        user_prompt = self._build_user_prompt()
+
+        return developer_prompt, user_prompt

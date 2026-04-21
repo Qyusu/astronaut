@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Literal, Type
+from typing import Type
 
 from loguru import logger
 from pydantic import BaseModel
@@ -36,7 +36,7 @@ class BaseLLMClient(ABC):
     @abstractmethod
     def parse_chat(
         self,
-        system_prompt: dict[str, str],
+        developer_prompt: dict[str, str],
         user_prompt: dict[str, str],
         message_history: MESSAGE_HISTORY_TYPE = [],
         n_history: int | None = None,
@@ -46,8 +46,6 @@ class BaseLLMClient(ABC):
         response_format: Type[BaseModel] | None = None,
         model_version: str | None = None,
         max_retries: int = 3,
-        reasoning_effort: Literal["low", "medium", "high"] | None = None,
-        max_thinking_tokens: int | None = None,
         **kwargs: dict,
     ) -> tuple[str, MESSAGE_HISTORY_TYPE, float]:
         """Perform chat completion with the LLM.
@@ -56,7 +54,7 @@ class BaseLLMClient(ABC):
         parameters for controlling the generation process and response format.
 
         Args:
-            system_prompt (dict[str, str]): System prompt containing role and content
+            developer_prompt (dict[str, str]): Developer prompt containing role and content
                 for initializing the chat context
             user_prompt (dict[str, str]): User prompt containing role and content
                 for the current request
@@ -77,10 +75,6 @@ class BaseLLMClient(ABC):
                 to use. Defaults to None.
             max_retries (int, optional): Maximum number of retry attempts for
                 failed API calls. Defaults to 3.
-            reasoning_effort (Literal["low", "medium", "high"] | None, optional):
-                Level of reasoning effort for OpenAI API. Defaults to None.
-            max_thinking_tokens (int | None, optional): Maximum number of tokens
-                for thinking process in Anthropic API. Defaults to None.
             **kwargs: Additional provider-specific parameters.
 
         Returns:
@@ -95,7 +89,9 @@ class BaseLLMClient(ABC):
         """
         pass
 
-    def _get_last_n_history(self, message_history: MESSAGE_HISTORY_TYPE, n_history: int | None) -> MESSAGE_HISTORY_TYPE:
+    def _get_last_n_history(
+        self, message_history: MESSAGE_HISTORY_TYPE, n_history: int | None
+    ) -> MESSAGE_HISTORY_TYPE:
         if n_history is None:
             # use all history
             history = message_history
@@ -106,14 +102,26 @@ class BaseLLMClient(ABC):
             history = message_history[-2 * n_history :]
         return history
 
-    def _calculate_cost(self, input_tokens: int, cached_tokens: int, output_tokens: int, model_name: str) -> float:
+    def _calculate_cost(
+        self,
+        input_tokens: int,
+        cached_tokens: int,
+        output_tokens: int,
+        model_name: str,
+    ) -> float:
         cost_per_1m_tokens = ChatModelCostTable().get_cost(model_name)
         if cost_per_1m_tokens is None:
-            logger.info(f'Model name "{model_name}" is not found in the cost table.')
+            logger.info(
+                f'Model name "{model_name}" is not found in the cost table.'
+            )
             return 0.0
 
         input_cost_per_1m_tokens = cost_per_1m_tokens.input / 10**6
-        cached_cost_per_1m_tokens = cost_per_1m_tokens.cached / 10**6 if cost_per_1m_tokens.cached is not None else 0.0
+        cached_cost_per_1m_tokens = (
+            cost_per_1m_tokens.cached / 10**6
+            if cost_per_1m_tokens.cached is not None
+            else 0.0
+        )
         output_cost_per_1m_tokens = cost_per_1m_tokens.output / 10**6
 
         non_cached_input_tokens = input_tokens - cached_tokens

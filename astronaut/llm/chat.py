@@ -1,6 +1,12 @@
-from astronaut.llm.config import LLMConfig
+from typing import Any
+
+from astronaut.llm.config import LLMConfig, LLMProvider
 from astronaut.llm.factory import LLMClientFactory
-from astronaut.llm.models import ChatRequest, ChatResponse
+from astronaut.llm.models import (
+    ChatRequest,
+    ChatResponse,
+    OpenAIChatRequest,
+)
 
 
 class ChatClient:
@@ -26,12 +32,26 @@ class ChatClient:
         self.config = config
         self.client = LLMClientFactory.create(config)
 
-    def parse_chat(self, system_prompt: dict[str, str], user_prompt: dict[str, str], **kwargs) -> ChatResponse:
-        request_params = ChatRequest(
-            system_prompt=system_prompt,
-            user_prompt=user_prompt,
-            **kwargs,
-        )
+    def parse_chat(
+        self,
+        developer_prompt: dict[str, str],
+        user_prompt: dict[str, str],
+        **kwargs: dict[str, Any],
+    ) -> ChatResponse:
+        if self.config.provider == LLMProvider.OPENAI:
+            request_params = OpenAIChatRequest(
+                developer_prompt=developer_prompt,
+                user_prompt=user_prompt,
+                **kwargs,
+            )
+        else:
+            request_params = ChatRequest(
+                developer_prompt=developer_prompt,
+                user_prompt=user_prompt,
+                **kwargs,
+            )
 
-        content, history, cost = self.client.parse_chat(**request_params.model_dump())
+        content, history, cost = self.client.parse_chat(
+            **request_params.model_dump()
+        )
         return ChatResponse(content=content, message_history=history, cost=cost)

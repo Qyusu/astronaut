@@ -1,10 +1,9 @@
 import re
 import time
-from typing import Type, cast
+import traceback
+from typing import Any, Type, cast
 
 from google import genai
-from google.genai.types import GenerateContentConfig, GenerateContentResponse
-from langsmith import traceable
 from loguru import logger
 from pydantic import BaseModel
 
@@ -60,57 +59,9 @@ class GoogleChatClient(BaseLLMClient):
         self.default_model_version = default_model_version
         self.total_cost = 0.0
 
-    def _construct_message(
-        self,
-        user_prompt: dict[str, str],
-        message_history: GEMINI_MESSAGE_HISTORY_TYPE,
-    ) -> str:
-        messages = "\n".join(
-            [f"{msg}" for msg in message_history] + [f"{user_prompt['role']}: {user_prompt['content']}"]
-        )
-        return messages
-
-    def _update_history(
-        self,
-        user_prompt: dict[str, str],
-        message_history: GEMINI_MESSAGE_HISTORY_TYPE,
-        content: str,
-    ) -> GEMINI_MESSAGE_HISTORY_TYPE:
-        updated_message_history = message_history + [
-            f"{user_prompt['role']}: {user_prompt['content']}",
-            f"model: {content}",
-        ]
-        return updated_message_history
-
-    def _get_model_name_from_version(self, model_version: str) -> str:
-        return re.sub(r"(-\d+)+$", "", model_version)
-
-    def _get_token_count(self, response: GenerateContentResponse) -> tuple[int, int, int]:
-        usage = response.usage_metadata
-        if usage is None:
-            logger.info("Usage information is not found in the response.")
-            return 0, 0, 0
-
-        usage_dict = usage.model_dump()
-        input_tokens = usage_dict.get("prompt_token_count") or 0
-        cached_tokens = usage_dict.get("cached_content_token_count") or 0
-        output_tokens = usage_dict.get("candidates_token_count") or 0
-
-        return input_tokens, cached_tokens, output_tokens
-
-    def _parse_response(self, response: GenerateContentResponse) -> str:
-        try:
-            content = response.candidates[0].content.parts[0].text  # type: ignore
-            if content is None:
-                raise ValueError("Gemini response is None.")
-            return content
-        except (KeyError, AttributeError) as e:
-            raise ValueError(f"Failed to parse Gemini response: {e}")
-
-    @traceable(tags=["llm"], run_type="llm")
     def parse_chat(
         self,
-        system_prompt: dict[str, str],
+        developer_prompt: dict[str, str],
         user_prompt: dict[str, str],
         message_history: MESSAGE_HISTORY_TYPE = [],
         n_history: int | None = None,
@@ -128,7 +79,7 @@ class GoogleChatClient(BaseLLMClient):
         backoff for failed requests and tracks token usage for cost calculation.
 
         Args:
-            system_prompt (dict[str, str]): System prompt containing role and content
+            developer_prompt (dict[str, str]): Developer prompt containing role and content
                 for initializing the chat context
             user_prompt (dict[str, str]): User prompt containing role and content
                 for the current request
@@ -165,50 +116,177 @@ class GoogleChatClient(BaseLLMClient):
         if model_version is None:
             model_version = self.default_model_version
 
-        history = cast(GEMINI_MESSAGE_HISTORY_TYPE, self._get_last_n_history(message_history, n_history))
-        messages = self._construct_message(user_prompt, history)
+        is_deep_research = model_version.startswith("deep-research")
+        kwargs: dict[str, Any] = {}
 
-        config = GenerateContentConfig(
-            system_instruction=system_prompt.get("content", ""),
-            temperature=temperature,
-            candidate_count=n,
-            max_output_tokens=max_tokens,
-            response_mime_type="application/json" if response_format is not None else None,
-            response_schema=response_format,
-        )
+        if is_deep_research:
+            history = cast(GEMINI_MESSAGE_HISTORY_TYPE, [])
+            messages = (
+                developer_prompt.get("content", "")
+                + "\n"
+                + user_prompt.get("content", "")
+            )
+            kwargs["input"] = messages
+            kwargs["agent"] = model_version
+            kwargs["background"] = True
+        else:
+            history = cast(
+                GEMINI_MESSAGE_HISTORY_TYPE,
+                self._get_last_n_history(message_history, n_history),
+            )
+            messages_list = self._construct_message(user_prompt, history)
 
-        history = self._get_last_n_history(message_history, n_history)
+            generation_config: dict[str, Any] = {
+                "temperature": temperature,
+            }
+            if max_tokens is not None:
+                generation_config["max_output_tokens"] = max_tokens
+            if response_format is not None:
+                kwargs["response_format"] = (
+                    response_format.model_json_schema()
+                    if hasattr(response_format, "model_json_schema")
+                    else response_format.schema()
+                )
+
+            kwargs["input"] = messages_list
+            kwargs["system_instruction"] = developer_prompt.get("content", "")
+            kwargs["model"] = model_version
+            kwargs["generation_config"] = generation_config
+
         attempts = 0
+        response = None
         while True:
             try:
-                response = self.client.models.generate_content(
-                    model=model_version,
-                    contents=messages,
-                    config=config,
-                )
-                content = self._parse_response(response)
-                updated_message_history = self._update_history(
-                    user_prompt=user_prompt,
-                    message_history=cast(GEMINI_MESSAGE_HISTORY_TYPE, history),
-                    content=content,
-                )
-
-                input_tokens, cached_tokens, output_tokens = self._get_token_count(response)
-                cost = self._calculate_cost(
-                    input_tokens=input_tokens,
-                    cached_tokens=cached_tokens,
-                    output_tokens=output_tokens,
-                    model_name=self._get_model_name_from_version(model_version),
-                )
-                self._update_cost(cost)
-
-                return content, updated_message_history, cost
+                if is_deep_research:
+                    response = self._chat_by_research_model(kwargs)
+                else:
+                    response = self.client.interactions.create(**kwargs)
+                break
             except Exception as e:
-                logger.info(f"Raise Exception: {e}")
+                logger.debug(traceback.format_exc())
+                logger.warning(f"Raise Exception: {e}")
                 attempts += 1
                 if attempts >= max_retries:
-                    raise ValueError(f"Failed to get response from Gemini after {max_retries} attempts: {e}")
+                    raise ValueError(
+                        f"Failed to get response from Gemini after {max_retries} attempts: {e}"
+                    )
 
                 wait_time = 60 * 2**attempts
                 logger.info(f"Retry after {wait_time} seconds...")
                 time.sleep(wait_time)
+
+        content = self._parse_response(response)
+        updated_message_history = self._update_history(
+            user_prompt=user_prompt,
+            message_history=history,
+            content=content,
+        )
+
+        input_tokens, cached_tokens, output_tokens = self._get_token_count(
+            response
+        )
+        cost = self._calculate_cost(
+            input_tokens=input_tokens,
+            cached_tokens=cached_tokens,
+            output_tokens=output_tokens,
+            model_name=self._get_model_name_from_version(model_version),
+        )
+        self._update_cost(cost)
+
+        return content, updated_message_history, cost
+
+    def _chat_by_research_model(self, kwargs: dict) -> Any:
+        initial_interaction = self.client.interactions.create(**kwargs)
+
+        logger.info("Request is sent to Gemini. Processing in background...")
+        while True:
+            interaction = self.client.interactions.get(initial_interaction.id)
+
+            if interaction.status == "completed":
+                break
+            elif interaction.status in ["failed", "cancelled"]:
+                raise ValueError(
+                    f"Failed to get response from Gemini: {interaction.status}"
+                )
+
+            time.sleep(10)
+
+        return interaction
+
+    def _construct_message(
+        self,
+        user_prompt: dict[str, str],
+        message_history: GEMINI_MESSAGE_HISTORY_TYPE,
+    ) -> list[dict[str, str]]:
+        messages = [{"role": "user", "content": user_prompt["content"]}]
+        return message_history + messages
+
+    def _update_history(
+        self,
+        user_prompt: dict[str, str],
+        message_history: GEMINI_MESSAGE_HISTORY_TYPE,
+        content: str,
+    ) -> GEMINI_MESSAGE_HISTORY_TYPE:
+        updated_message_history = message_history + [
+            {"role": "user", "content": user_prompt["content"]},
+            {"role": "model", "content": content},
+        ]
+        return updated_message_history
+
+    def _get_model_name_from_version(self, model_version: str) -> str:
+        return re.sub(r"(-\d+)+$", "", model_version)
+
+    def _get_token_count(self, response: Any) -> tuple[int, int, int]:
+        usage = getattr(response, "usage_metadata", None) or getattr(
+            response, "usage", None
+        )
+        if usage is None:
+            logger.info("Usage information is not found in the response.")
+            return 0, 0, 0
+
+        if hasattr(usage, "model_dump"):
+            usage_dict = usage.model_dump()
+            input_tokens = (
+                usage_dict.get(
+                    "prompt_token_count", usage_dict.get("input_tokens", 0)
+                )
+                or 0
+            )
+            cached_tokens = (
+                usage_dict.get(
+                    "cached_content_token_count",
+                    usage_dict.get("cached_tokens", 0),
+                )
+                or 0
+            )
+            output_tokens = (
+                usage_dict.get(
+                    "candidates_token_count", usage_dict.get("output_tokens", 0)
+                )
+                or 0
+            )
+        else:
+            input_tokens = getattr(
+                usage, "prompt_token_count", getattr(usage, "input_tokens", 0)
+            )
+            cached_tokens = getattr(
+                usage,
+                "cached_content_token_count",
+                getattr(usage, "cached_tokens", 0),
+            )
+            output_tokens = getattr(
+                usage,
+                "candidates_token_count",
+                getattr(usage, "output_tokens", 0),
+            )
+
+        return input_tokens, cached_tokens, output_tokens
+
+    def _parse_response(self, interaction: Any) -> str:
+        try:
+            content = interaction.outputs[-1].text
+            if content is None:
+                raise ValueError("Gemini interaction is None.")
+            return content
+        except (KeyError, AttributeError) as e:
+            raise ValueError(f"Failed to parse Gemini interaction: {e}")

@@ -1,17 +1,22 @@
 import json
 from enum import Enum
+from typing import Callable, Literal
 
+import numpy as np
 import pandas as pd
 from langsmith import traceable
 from loguru import logger
+from openai.types.shared.reasoning_effort import ReasoningEffort
 from pydantic import BaseModel, Field
 
-from astronaut.constants import GPT_MAX_TOKENS, REASONING_MAX_TOKENS, REASONING_SERIES
+import astronaut.constants as exp_const
 from astronaut.llm import ChatClient
-from astronaut.logics.common.parser import ParseGeneratedResult
-from astronaut.schema import MESSAGE_HISTORY_TYPE, IdeaScore, ReviewIdeaResult
-
-LANGFUSE_TRACKING_TAGS = ["review", "idea"]
+from astronaut.schema import (
+    MESSAGE_HISTORY_TYPE,
+    MessageHistory,
+    ReviewIdeaResult,
+    RunContext,
+)
 
 
 class ReviewIdea:
@@ -24,56 +29,98 @@ class ReviewIdea:
     Args:
         client (ChatClient): Client for interacting with the language model
         model_version (str): Version of the language model to use
-        parser_model_version (str): Version of the parser model to use
 
     Methods:
         review: Reviews and analyzes feature map ideas
     """
 
-    def __init__(self, client: ChatClient, model_version: str, parser_model_version: str) -> None:
+    def __init__(
+        self,
+        client: ChatClient,
+        model_version: str,
+        reasoning_effort: ReasoningEffort | None = None,
+        verbosity: Literal["low", "medium", "high"] | None = None,
+    ) -> None:
         self.client = client
         self.model_version = model_version
-        self.parser = ParseGeneratedResult(client, parser_model_version)
+        self.reasoning_effort = reasoning_effort
+        self.verbosity = verbosity
 
-    @traceable(tags=LANGFUSE_TRACKING_TAGS)
+    @traceable(tags=exp_const.LANGSMITH_REVIEW_IDEA_TAGS)
     def review(
         self,
-        system_prompt: dict[str, str],
+        prompt_builder_fn: Callable[..., tuple[dict[str, str], dict[str, str]]],
+        last_trial_num: int,
+        context: RunContext,
+        performance_review: str | None = None,
+    ) -> tuple[str, MessageHistory, float]:
+        """Review idea using a provided prompt builder function.
+
+        Args:
+            prompt_builder_fn: Function that builds developer and user prompts.
+                Should accept (max_suggestion_num, last_trial_num,
+                last_trial_results, performance_review) and return (developer_prompt, user_prompt)
+            last_trial_num: Number of the last trial
+            context: Current run context
+            performance_review: Optional performance review string
+
+        Returns:
+            tuple: (review_comment, updated_message_history, cost)
+        """
+        developer_prompt, user_prompt = prompt_builder_fn(
+            max_suggestion_num=context.max_suggestion_num,
+            last_trial_num=last_trial_num,
+            last_trial_results=context.last_trial_results,
+            performance_review=performance_review,
+        )
+
+        result, history, cost = self._review_by_llm(
+            developer_prompt=developer_prompt,
+            user_prompt=user_prompt,
+            message_history=context.message_history.review,
+            n_history=context.n_message_history.review,
+        )
+
+        updated_message_history = MessageHistory(
+            review=history,
+            idea=context.message_history.idea,
+            code=context.message_history.code,
+        )
+
+        return result.review_comment(), updated_message_history, cost
+
+    def _review_by_llm(
+        self,
+        developer_prompt: dict[str, str],
         user_prompt: dict[str, str],
         message_history: MESSAGE_HISTORY_TYPE,
         n_history: int | None,
     ) -> tuple[ReviewIdeaResult, MESSAGE_HISTORY_TYPE, float]:
-        logger.info("Review Last Idea...")
-        logger.debug(f"Input User Prompt: {user_prompt}")
-        if self.model_version in REASONING_SERIES:
-            response = self.client.parse_chat(
-                system_prompt=system_prompt,
-                user_prompt=user_prompt,
-                message_history=message_history,
-                n_history=n_history,
-                n=1,
-                max_tokens=REASONING_MAX_TOKENS,
-                response_format=ReviewIdeaResult,
-                model_version=self.model_version,
-            )
-        else:
-            response = self.client.parse_chat(
-                system_prompt=system_prompt,
-                user_prompt=user_prompt,
-                message_history=message_history,
-                n_history=n_history,
-                temperature=0.2,
-                n=1,
-                max_tokens=GPT_MAX_TOKENS,
-                response_format=ReviewIdeaResult,
-                model_version=self.model_version,
-            )
+        logger.info("Reviewing idea...")
+        logger.debug(
+            f"developer_prompt: {developer_prompt}, user_prompt: {user_prompt}"
+        )
+
+        response = self.client.parse_chat(
+            developer_prompt=developer_prompt,
+            user_prompt=user_prompt,
+            message_history=message_history,
+            n_history=n_history,
+            response_format=ReviewIdeaResult,
+            model_version=self.model_version,
+            reasoning=self.reasoning_effort,
+            verbosity=self.verbosity,
+        )
 
         result = json.loads(response.content)
-        logger.info("Review Last Step Idea is done. And result is parsed as JSON.")
-        logger.debug(f"Reviewed Last Idea: {result}")
+        logger.debug(f"Idea review result: {result}")
+        logger.info("Idea review is done and result is parsed as JSON.")
 
-        return ReviewIdeaResult(**result), response.message_history, response.cost
+        return (
+            ReviewIdeaResult(**result),
+            response.message_history,
+            response.cost,
+        )
 
 
 class PerformanceStatus(Enum):
@@ -88,23 +135,40 @@ class PerformanceStatus(Enum):
 
 class MetricThresholds(BaseModel):
     significant_improve: tuple[float, float] = Field(
-        ..., description="Threshold range for significant improvement (lower_bound, upper_bound)"
+        ...,
+        description="Threshold range for significant improvement (lower_bound, upper_bound)",
     )
-    improve: tuple[float, float] = Field(..., description="Threshold range for improvement (lower_bound, upper_bound)")
+    improve: tuple[float, float] = Field(
+        ...,
+        description="Threshold range for improvement (lower_bound, upper_bound)",
+    )
     marginal_improve: tuple[float, float] = Field(
-        ..., description="Threshold range for marginal improvement (lower_bound, upper_bound)"
+        ...,
+        description="Threshold range for marginal improvement (lower_bound, upper_bound)",
     )
     slight_drop: tuple[float, float] = Field(
-        ..., description="Threshold range for slight drop (lower_bound, upper_bound)"
+        ...,
+        description="Threshold range for slight drop (lower_bound, upper_bound)",
     )
     significant_drop: tuple[float, float] = Field(
-        ..., description="Threshold range for significant drop (lower_bound, upper_bound)"
+        ...,
+        description="Threshold range for significant drop (lower_bound, upper_bound)",
     )
 
 
 class ReviewMetric(Enum):
-    ACCURACY = (
-        "accuracy",
+    NONE = (
+        "none",
+        MetricThresholds(
+            significant_improve=(0.0, 0.0),
+            improve=(0.0, 0.0),
+            marginal_improve=(0.0, 0.0),
+            slight_drop=(0.0, 0.0),
+            significant_drop=(0.0, 0.0),
+        ),
+    )
+    AGGREGATED_ACCURACY = (
+        "aggregated_accuracy_validation",
         MetricThresholds(
             significant_improve=(0.2, 1.0),
             improve=(0.05, 0.2),
@@ -113,25 +177,28 @@ class ReviewMetric(Enum):
             significant_drop=(-1.0, -0.2),
         ),
     )
-    COST = (
-        "cost",
+    AGGREGATED_COST = (
+        "aggregated_cost",
         MetricThresholds(
-            significant_improve=(-100.0, -0.1),
-            improve=(-0.1, -0.01),
-            marginal_improve=(-0.01, -1e-10),
-            slight_drop=(1e-10, 0.1),
-            significant_drop=(0.1, 100.0),
+            significant_improve=(0.2, 1.0),
+            improve=(0.05, 0.2),
+            marginal_improve=(0.0, 0.05),
+            slight_drop=(-0.2, 0.0),
+            significant_drop=(-np.inf, -0.2),
         ),
     )
 
     def __init__(self, value: str, thresholds: MetricThresholds):
-        self._value_ = value
+        self._value_ = value  # type: ignore[assignment]
         self.thresholds = thresholds
 
 
 class ReviewDirection(BaseModel):
     status: PerformanceStatus
-    message: str = Field(..., description="Review direction message for the given performance status")
+    message: str = Field(
+        ...,
+        description="Review direction message for the given performance status",
+    )
 
 
 class ReviewPerformance:
@@ -215,39 +282,87 @@ class ReviewPerformance:
 
         if review_comment_template is None:
             self.review_comment_template = (
-                'In the previous trial, the model\'s classification accuracy "{discreatize_performance}". '
+                'In the previous trial, the model\'s performance "{discreatize_performance}". '
                 "{review_direction}"
             )
         else:
             self.review_comment_template = review_comment_template
 
-    def _get_performance_status(self, diff_metric: float, metric: ReviewMetric) -> PerformanceStatus:
+    @traceable(tags=exp_const.LANGSMITH_REVIEW_IDEA_TAGS)
+    def review(
+        self,
+        evaluation_df: pd.DataFrame,
+        metric: ReviewMetric,
+    ) -> str | None:
+        if len(evaluation_df) < 2:
+            return None
+
+        metric_value = self._compute_metric_value(evaluation_df, metric)
+        status = self._get_performance_status(metric_value, metric)
+        review_direction = self.review_directions.get(
+            status, ReviewDirection(status=status, message="")
+        )
+
+        return self.review_comment_template.format(
+            discreatize_performance=status.value,
+            review_direction=review_direction.message,
+        )
+
+    def _compute_metric_value(
+        self,
+        evaluation_df: pd.DataFrame,
+        metric: ReviewMetric,
+        eps: float = 1e-6,
+    ) -> float:
+        if metric == ReviewMetric.NONE:
+            raise ValueError(
+                "ReviewMetric.NONE is invalid for metric value computation"
+            )
+
+        before = evaluation_df[metric.value].values[-2]
+        after = evaluation_df[metric.value].values[-1]
+
+        if metric == ReviewMetric.AGGREGATED_ACCURACY:
+            # positive value means improvement
+            value = after - before
+            return value
+        elif metric == ReviewMetric.AGGREGATED_COST:
+            # positive value means improvement
+            value = (before - after) / max(before, eps)
+            return value
+        else:
+            raise ValueError(f"Unknown metric: {metric}")
+
+    def _get_performance_status(
+        self, diff_metric: float, metric: ReviewMetric
+    ) -> PerformanceStatus:
         thresholds = metric.thresholds
 
-        if thresholds.significant_improve[0] < diff_metric <= thresholds.significant_improve[1]:
+        if (
+            thresholds.significant_improve[0]
+            < diff_metric
+            <= thresholds.significant_improve[1]
+        ):
             return PerformanceStatus.SIGNIFICANTLY_IMPROVED
         elif thresholds.improve[0] < diff_metric <= thresholds.improve[1]:
             return PerformanceStatus.IMPROVED
-        elif thresholds.marginal_improve[0] < diff_metric <= thresholds.marginal_improve[1]:
+        elif (
+            thresholds.marginal_improve[0]
+            < diff_metric
+            <= thresholds.marginal_improve[1]
+        ):
             return PerformanceStatus.MARGINALLY_IMPROVED
         elif diff_metric == 0.0:
             return PerformanceStatus.UNCHANGED
-        elif thresholds.slight_drop[0] <= diff_metric < thresholds.slight_drop[1]:
+        elif (
+            thresholds.slight_drop[0] <= diff_metric < thresholds.slight_drop[1]
+        ):
             return PerformanceStatus.DROPPED_SLIGHTLY
-        elif thresholds.significant_drop[0] <= diff_metric < thresholds.significant_drop[1]:
+        elif (
+            thresholds.significant_drop[0]
+            <= diff_metric
+            < thresholds.significant_drop[1]
+        ):
             return PerformanceStatus.DROPPED_SIGNIFICANTLY
         else:
             return PerformanceStatus.OUT_OF_RANGE
-
-    @traceable(tags=LANGFUSE_TRACKING_TAGS)
-    def review(self, evaluation_df: pd.DataFrame, score_list: list[IdeaScore], metric: ReviewMetric) -> str | None:
-        if (len(evaluation_df) < 2) or (len(score_list) < 2):
-            return None
-
-        diff_metric = evaluation_df[metric.value].values[-1] - evaluation_df[metric.value].values[-2]
-        status = self._get_performance_status(diff_metric, metric)
-        review_direction = self.review_directions.get(status, ReviewDirection(status=status, message=""))
-
-        return self.review_comment_template.format(
-            discreatize_performance=status.value, review_direction=review_direction.message
-        )

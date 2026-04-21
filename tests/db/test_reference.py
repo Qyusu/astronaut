@@ -3,7 +3,7 @@ from xml.etree.ElementTree import Element, tostring
 import pytest
 from pytest_mock import MockFixture
 
-from astronaut.db.reference import SearchReference
+from astronaut.db.academic_papers.reference import SearchReference
 
 
 def mock_arxiv_response() -> str:
@@ -29,7 +29,9 @@ def mock_arxiv_response() -> str:
     published.text = "2024-01-01T00:00:00Z"
     entry.append(published)
 
-    link = Element("link", type="application/pdf", href="http://arxiv.org/pdf/test.pdf")
+    link = Element(
+        "link", type="application/pdf", href="http://arxiv.org/pdf/test.pdf"
+    )
     entry.append(link)
 
     root.append(entry)
@@ -43,30 +45,43 @@ def search_reference() -> "SearchReference":
 
 def test_build_search_query(search_reference: SearchReference) -> None:
     # Single keyword
-    assert search_reference.build_search_query("quantum", None, None, None, None) == 'all:"quantum"'
+    assert (
+        search_reference.build_search_query("quantum", None, None, None, None)
+        == 'all:"quantum"'
+    )
     # Multiple keywords with AND
     assert (
-        search_reference.build_search_query(["quantum computing", "machine learning"], "AND", None, None, None)
+        search_reference.build_search_query(
+            ["quantum computing", "machine learning"], "AND", None, None, None
+        )
         == 'all:"quantum computing" AND all:"machine learning"'
     )
     # Category and single keyword
     assert (
-        search_reference.build_search_query(["quantum computing"], "AND", "cs.AI", None, None)
+        search_reference.build_search_query(
+            ["quantum computing"], "AND", "cs.AI", None, None
+        )
         == 'cat:cs.AI AND (all:"quantum computing")'
     )
     # Category and keywords
     assert (
-        search_reference.build_search_query(["quantum computing", "machine learning"], "OR", "cs.AI", None, None)
+        search_reference.build_search_query(
+            ["quantum computing", "machine learning"], "OR", "cs.AI", None, None
+        )
         == 'cat:cs.AI AND (all:"quantum computing" OR all:"machine learning")'
     )
     # Date range
     assert (
-        search_reference.build_search_query(["quantum computing"], "AND", None, "2022-01-01", "2022-12-31")
+        search_reference.build_search_query(
+            ["quantum computing"], "AND", None, "2022-01-01", "2022-12-31"
+        )
         == 'all:"quantum computing" AND submittedDate:[2022-01-01 TO 2022-12-31]'
     )
     # Invalid operator
     with pytest.raises(ValueError):
-        search_reference.build_search_query(["quantum", "computing"], "INVALID", None, None, None)
+        search_reference.build_search_query(
+            ["quantum", "computing"], "INVALID", None, None, None
+        )
 
 
 def test_get_text_or_default(search_reference: SearchReference) -> None:
@@ -74,19 +89,28 @@ def test_get_text_or_default(search_reference: SearchReference) -> None:
     element = Element("test")
     element.text = "Sample Text"
     elements.append(element)
-    assert search_reference.get_text_or_default(elements, "test") == "Sample Text"
-    assert search_reference.get_text_or_default(elements, "empty") == "Not Exist"
+    assert (
+        search_reference.get_text_or_default(elements, "test") == "Sample Text"
+    )
+    assert (
+        search_reference.get_text_or_default(elements, "empty") == "Not Exist"
+    )
 
 
 def test_get_url_or_default(search_reference: SearchReference) -> None:
     elements = Element("elements")
     element = Element("link", href="http://example.com")
     elements.append(element)
-    assert search_reference.get_url_or_default(elements, "link") == "http://example.com"
+    assert (
+        search_reference.get_url_or_default(elements, "link")
+        == "http://example.com"
+    )
     assert search_reference.get_url_or_default(elements, "empty") == "Not Exist"
 
 
-def test_search_arxiv(mocker: MockFixture, search_reference: SearchReference) -> None:
+def test_search_arxiv(
+    mocker: MockFixture, search_reference: SearchReference
+) -> None:
     mock_response = mocker.patch("requests.get")
     mock_response.return_value.status_code = 200
     mock_response.return_value.text = mock_arxiv_response()
@@ -106,11 +130,17 @@ def test_search_arxiv(mocker: MockFixture, search_reference: SearchReference) ->
     # Ensure the mock was called with the correct URL and parameters
     mock_response.assert_called_once_with(
         "http://export.arxiv.org/api/query",
-        params={"search_query": 'all:"quantum computing"', "start": 0, "max_results": 1},
+        params={
+            "search_query": 'all:"quantum computing"',
+            "start": 0,
+            "max_results": 1,
+        },
     )
 
 
-def test_search_arxiv_with_retry(mocker: MockFixture, search_reference: SearchReference) -> None:
+def test_search_arxiv_with_retry(
+    mocker: MockFixture, search_reference: SearchReference
+) -> None:
     """Test the retry mechanism of search_arxiv."""
     mock_response = mocker.patch("requests.get")
     # First call raises ConnectionError, second call succeeds
@@ -124,7 +154,9 @@ def test_search_arxiv_with_retry(mocker: MockFixture, search_reference: SearchRe
     assert mock_response.call_count == 2
 
 
-def test_search_arxiv_error_response(mocker: MockFixture, search_reference: SearchReference) -> None:
+def test_search_arxiv_error_response(
+    mocker: MockFixture, search_reference: SearchReference
+) -> None:
     """Test handling of non-200 response status."""
     mock_response = mocker.patch("requests.get")
     # Always return 404 status to trigger all retries
@@ -136,13 +168,15 @@ def test_search_arxiv_error_response(mocker: MockFixture, search_reference: Sear
     assert mock_response.call_count == 3  # Verify that it tried 3 times
 
 
-def test_search_arxiv_complex_query(mocker: MockFixture, search_reference: SearchReference) -> None:
+def test_search_arxiv_complex_query(
+    mocker: MockFixture, search_reference: SearchReference
+) -> None:
     """Test search with multiple filters."""
     mock_response = mocker.patch("requests.get")
     mock_response.return_value.status_code = 200
     mock_response.return_value.text = mock_arxiv_response()
 
-    result = search_reference.search_arxiv(
+    _ = search_reference.search_arxiv(
         query=["quantum computing", "machine learning"],
         query_operator="AND",
         category="cs.AI",
@@ -160,7 +194,9 @@ def test_search_arxiv_complex_query(mocker: MockFixture, search_reference: Searc
     )
 
 
-def test_search_arxiv_multiple_authors(mocker: MockFixture, search_reference: SearchReference) -> None:
+def test_search_arxiv_multiple_authors(
+    mocker: MockFixture, search_reference: SearchReference
+) -> None:
     """Test parsing of multiple authors."""
 
     def mock_multiple_authors_response() -> str:
@@ -188,7 +224,9 @@ def test_search_arxiv_multiple_authors(mocker: MockFixture, search_reference: Se
         published.text = "2024-01-01T00:00:00Z"
         entry.append(published)
 
-        link = Element("link", type="application/pdf", href="http://arxiv.org/pdf/test.pdf")
+        link = Element(
+            "link", type="application/pdf", href="http://arxiv.org/pdf/test.pdf"
+        )
         entry.append(link)
 
         root.append(entry)
@@ -204,7 +242,9 @@ def test_search_arxiv_multiple_authors(mocker: MockFixture, search_reference: Se
     assert result[0].authors == ["Author One", "Author Two", "Author Three"]
 
 
-def test_search_arxiv_missing_fields(mocker: MockFixture, search_reference: SearchReference) -> None:
+def test_search_arxiv_missing_fields(
+    mocker: MockFixture, search_reference: SearchReference
+) -> None:
     """Test handling of missing optional fields in response."""
 
     def mock_missing_fields_response() -> str:

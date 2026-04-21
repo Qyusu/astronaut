@@ -1,0 +1,16 @@
+task_type: "vqe"
+dataset_config_path: "datasets.yaml"
+validation_qubits: [4, 6, 8, 10, 12]
+experiment_name: "vqe_20251228"
+desc: "This is a VQE experiment."
+max_trial_num: 15
+max_idea_num: 2
+max_suggestion_num: 2
+expanding_steps: [5, 3]
+research_mode: "deep"
+existing_research_report_path: null
+reflection_type: "debate"
+max_reflection_round: 2
+max_scoring_round: 0
+log_level: "DEBUG"
+console_log_level: "INFO"

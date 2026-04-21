@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import ClassVar, Literal
+from typing import ClassVar
 
 from pydantic import BaseModel
 
@@ -23,7 +23,6 @@ class LLMConfig(BaseModel):
 
 class OpenAIConfig(LLMConfig):
     provider: LLMProvider = LLMProvider.OPENAI
-    reasoning_effort: Literal["low", "medium", "high"] = "high"
 
 
 class AnthropicConfig(LLMConfig):

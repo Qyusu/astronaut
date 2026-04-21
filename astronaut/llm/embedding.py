@@ -1,6 +1,6 @@
 import time
+import traceback
 
-from langsmith import traceable
 from langsmith.wrappers import wrap_openai
 from loguru import logger
 from openai import OpenAI
@@ -63,35 +63,16 @@ class EmbeddingClient:
             if self.platform == "openai":
                 return wrap_openai(OpenAI(api_key=self.api_key))
             else:
-                raise ValueError(f"Embedding model only supports OpenAI. {self.platform} is not supported.")
+                raise ValueError(
+                    f"Embedding model only supports OpenAI. {self.platform} is not supported."
+                )
         except Exception as e:
+            logger.debug(traceback.format_exc())
             raise ValueError(f"Failed to initialize OpenAI client: {e}")
 
-    @traceable(tags=["llm"], run_type="llm")
-    def _embeddings(self, model_version: str, text_list: list[str]) -> CreateEmbeddingResponse:
-        response = self.client.embeddings.create(
-            model=model_version,
-            input=text_list,
-        )
-        return response
-
-    def _calculate_cost(self, response: CreateEmbeddingResponse) -> float:
-        model_version = self.embeddings_model_version
-        cost_per_1m_tokens = EmbeddingModelCostTable().get_cost(model_version)
-        if cost_per_1m_tokens is None:
-            logger.info(f'Model version "{model_version}" is not found in the cost table.')
-            return 0.0
-
-        usage = response.usage
-        if usage is None:
-            logger.info("Usage information is not found in the response.")
-            return 0.0
-
-        cost = usage.total_tokens * cost_per_1m_tokens.input / 10**6
-
-        return cost
-
-    def embeddings(self, text_list: list[str], max_retries: int = 3) -> tuple[list[list[float]], float]:
+    def embeddings(
+        self, text_list: list[str], max_retries: int = 3
+    ) -> tuple[list[list[float]], float]:
         """Generate embeddings for a list of text inputs.
 
         This method converts a list of text strings into their corresponding vector embeddings
@@ -123,15 +104,48 @@ class EmbeddingClient:
         attempts = 0
         while True:
             try:
-                response = self._embeddings(model_version=self.embeddings_model_version, text_list=text_list)
+                response = self._embeddings(
+                    model_version=self.embeddings_model_version,
+                    text_list=[text for text in text_list if text],
+                )
                 cost = self._calculate_cost(response)
                 return [record.embedding for record in response.data], cost
             except Exception as e:
-                logger.info(f"Raise Exception: {e}")
+                logger.debug(traceback.format_exc())
+                logger.warning(f"Raise Exception: {e}")
                 attempts += 1
                 if attempts >= max_retries:
-                    raise ValueError(f"Failed to get embeddings from OpenAI after {max_retries} attempts: {e}")
+                    raise ValueError(
+                        f"Failed to get embeddings from OpenAI after {max_retries} attempts: {e}"
+                    )
 
                 wait_time = 60 * 2**attempts
                 logger.info(f"Retry after {wait_time} seconds...")
                 time.sleep(wait_time)
+
+    def _embeddings(
+        self, model_version: str, text_list: list[str]
+    ) -> CreateEmbeddingResponse:
+        response = self.client.embeddings.create(
+            model=model_version,
+            input=text_list,
+        )
+        return response
+
+    def _calculate_cost(self, response: CreateEmbeddingResponse) -> float:
+        model_version = self.embeddings_model_version
+        cost_per_1m_tokens = EmbeddingModelCostTable().get_cost(model_version)
+        if cost_per_1m_tokens is None:
+            logger.info(
+                f'Model version "{model_version}" is not found in the cost table.'
+            )
+            return 0.0
+
+        usage = response.usage
+        if usage is None:
+            logger.info("Usage information is not found in the response.")
+            return 0.0
+
+        cost = usage.total_tokens * cost_per_1m_tokens.input / 10**6
+
+        return cost
