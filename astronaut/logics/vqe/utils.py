@@ -1,9 +1,23 @@
-from typing import Any
-
 import numpy as np
+import yaml
 
-import astronaut.logics.vqe.constants as vqe_const
-from astronaut.logics.vqe.molecule_configs import TargetMolecule
+
+def get_n_qubits_from_config(config_path: str) -> int:
+    config = yaml.safe_load(open(config_path))
+    n_qubits = config.get("device", {}).get("n_qubits", None)
+    if n_qubits is None:
+        raise ValueError("n_qubits is not found in the config.")
+    return n_qubits
+
+
+def get_molname_from_config(config_path: str) -> str:
+    config = yaml.safe_load(open(config_path))
+    molname = (
+        config.get("hamiltonian", {}).get("params", {}).get("molname", None)
+    )
+    if molname is None:
+        raise ValueError("molname is not found in the config.")
+    return molname
 
 
 def get_bond_lengths(
@@ -71,29 +85,10 @@ def get_coordinates(
             raise ValueError(f"Unsupported molecule: {molecule_name}")
 
 
-def update_config_for_molecule(
-    config: dict[str, Any],
-    molecule_settings: TargetMolecule,
-    bond_length: float,
-) -> None:
-    """Update config with molecule settings."""
-    params = {
-        vqe_const.QXMT_CONFIG_KEY_SYMBOLS: molecule_settings.symbols,
-        vqe_const.QXMT_CONFIG_KEY_COORDINATES: get_coordinates(
-            molecule_settings.name, bond_length
-        ),
-        **molecule_settings.structures.model_dump(),
-        **molecule_settings.hamiltonian_settings.model_dump(),
-    }
+def filter_truncated_bond_lengths(
+    bond_lengths: list[float], decimals: int
+) -> list[float]:
+    factor = 10**decimals
+    truncated = np.floor(np.array(bond_lengths) * factor) / factor
 
-    energy_cache = molecule_settings.energy_cache
-    if energy_cache and bond_length in energy_cache:
-        energies = energy_cache[bond_length].model_dump(exclude_none=True)
-        params.update({f"{k}_energy": v for k, v in energies.items()})
-
-    config[vqe_const.QXMT_CONFIG_KEY_HAMILTONIAN][
-        vqe_const.QXMT_CONFIG_KEY_PARAMS
-    ] = params
-    config[vqe_const.QXMT_CONFIG_KEY_DEVICE][
-        vqe_const.QXMT_CONFIG_KEY_N_QUBITS
-    ] = molecule_settings.n_qubits
+    return [bl for bl, tr in zip(bond_lengths, truncated) if np.isclose(bl, tr)]

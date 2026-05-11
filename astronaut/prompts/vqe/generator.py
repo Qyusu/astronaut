@@ -127,7 +127,7 @@ class ResearchBasedAnsatzIdeaPrompt(BaseGenerateAnsatzIdeaPrompt):
         return developer_prompt, user_prompt
 
 
-class ExpandingAnsatzIdeaPrompt(BaseGenerateAnsatzIdeaPrompt):
+class FilteringAnsatzIdeaPrompt(BaseGenerateAnsatzIdeaPrompt):
     def _build_user_prompt(
         self, idea_num: int, experiment_report: str
     ) -> dict[str, str]:
@@ -204,7 +204,7 @@ class FeedbackBasedAnsatzIdeaPrompt(BaseGenerateAnsatzIdeaPrompt):
         )
 
         if seed_ideas:
-            user_prompt += f"\n\n# Seed Ideas\nThis is first trial, so provided feedback is below multiple seed ideas:\n{seed_ideas}"
+            user_prompt += f"\n\n# Seed Ideas\nThis is first trial, so provided feedback is below mutiple seed ideas:\n{seed_ideas}"
 
         return user_prompt
 

@@ -1,6 +1,7 @@
+import json
 from enum import Enum
 from textwrap import dedent
-from typing import Any, TypeAlias
+from typing import Any, Type, TypeAlias
 
 import pandas as pd
 from anthropic.types import MessageParam
@@ -12,16 +13,69 @@ from pydantic import (
     field_validator,
 )
 
-import astronaut.constants as exp_const
+from astronaut.constants import COMPLETED
 
 OPENAI_MESSAGE_HISTORY_TYPE: TypeAlias = list[str]
-GEMINI_MESSAGE_HISTORY_TYPE: TypeAlias = list[dict[str, str]]
+GEMINI_MESSAGE_HISTORY_TYPE: TypeAlias = list[str]
 ANTHOROPIC_MESSAGE_HISTORY_TYPE: TypeAlias = list[MessageParam]
 MESSAGE_HISTORY_TYPE: TypeAlias = (
     OPENAI_MESSAGE_HISTORY_TYPE
     | GEMINI_MESSAGE_HISTORY_TYPE
     | ANTHOROPIC_MESSAGE_HISTORY_TYPE
 )
+
+
+def get_schema_string(schema: Type[BaseModel]) -> str:
+    def _extract_descriptions_with_type(schema: dict) -> dict:
+        def _resolve_ref(ref: str, definitions: dict) -> dict:
+            """Expand $ref and get the target definition"""
+            ref_name = ref.split("/")[-1]
+            return definitions.get(ref_name, {})
+
+        def _traverse(properties: dict, definitions: dict) -> dict:
+            """recursive processing of "properties" in schema"""
+            result: dict[str, Any] = {}
+            for key, value in properties.items():
+                type_str = f"({value.get('type', 'object')})"
+
+                if "$ref" in value:
+                    ref_schema = _resolve_ref(value["$ref"], definitions)
+                    if "description" in value:
+                        result[key] = f"{value['description']} {type_str}"
+                    result[key] = _traverse(
+                        ref_schema.get("properties", {}), definitions
+                    )
+
+                elif "items" in value and "$ref" in value["items"]:
+                    # if the value is a list of objects, add two items for the list
+                    ref_schema = _resolve_ref(
+                        value["items"]["$ref"], definitions
+                    )
+                    list_item = _traverse(
+                        ref_schema.get("properties", {}), definitions
+                    )
+                    result[key] = [list_item, list_item]
+
+                elif "properties" in value:
+                    result[key] = _traverse(value["properties"], definitions)
+
+                elif "description" in value:
+                    result[key] = f"{value['description']} {type_str}"
+
+            return result
+
+        definitions = schema.get("$defs", {})
+        return _traverse(schema.get("properties", {}), definitions)
+
+    schema_dict = schema.model_json_schema()
+    formatted_schema = _extract_descriptions_with_type(schema_dict)
+    safe_schema = (
+        json.dumps(formatted_schema, indent=2, ensure_ascii=False)
+        .replace("{", "{{")
+        .replace("}", "}}")
+    )
+
+    return safe_schema
 
 
 class MessageHistory(BaseModel):
@@ -146,23 +200,19 @@ class ReviewIdeaResult(BaseModel):
         ..., description="The suggestions for the next idea."
     )
 
-    @staticmethod
-    def _to_bullets(items: list[str], empty_message: str) -> str:
-        if not items:
-            return empty_message
+    def suggestions_list_str(self) -> str:
+        if self.suggestions[0] == COMPLETED:
+            return COMPLETED
         else:
-            return "- " + "\n- ".join(items)
-
-    @property
-    def is_completed(self) -> bool:
-        return self.suggestions == [exp_const.COMPLETED]
+            return "- " + "\n- ".join(self.suggestions)
 
     def review_comment(self) -> str:
-        if self.is_completed:
-            return exp_const.COMPLETED
-        keep_points_str = self._to_bullets(self.keep_points, "No keep points.")
-        suggestions_str = self._to_bullets(self.suggestions, "No suggestions.")
-        return f"#### Keep Points:\n{keep_points_str}\n\n#### Suggestions:\n{suggestions_str}"
+        if self.suggestions[0] == COMPLETED:
+            return COMPLETED
+        else:
+            keep_points_str = "- " + "\n- ".join(self.keep_points)
+            suggestions_str = "- " + "\n- ".join(self.suggestions)
+            return f"#### Keep Points:\n{keep_points_str}\n\n#### Suggestions:\n{suggestions_str}"
 
 
 class GeneratedIdea(BaseModel):
@@ -314,13 +364,6 @@ class ReflectionType(str, Enum):
     DEBATE_REFLECTION = "debate"
 
 
-class TaskType(str, Enum):
-    """Task type configuration."""
-
-    QUANTUM_KERNEL = "quantum_kernel"
-    VQE = "vqe"
-
-
 class ReflectionConfig(BaseModel):
     """Configuration for reflection behavior."""
 
@@ -436,7 +479,7 @@ class DebateCriticIdeaResult(BaseModel):
         ..., description="The feedback from the critic."
     )
 
-    @computed_field  # type: ignore[misc]
+    @computed_field
     @property
     def is_completed(self) -> bool:
         """Whether the reflection is completed. True when feedback list is empty."""
@@ -453,8 +496,8 @@ class DebateCriticIdeaResult(BaseModel):
 
 class ModelVersions(BaseModel):
     default: str = Field(..., description="The default model version.")
-    expanding: str = Field(
-        ..., description="The model version for idea expanding."
+    filtering: str = Field(
+        ..., description="The model version for idea filtering."
     )
     idea: str = Field(..., description="The model version for idea generation.")
     scoring: str = Field(..., description="The model version for scoring idea.")
@@ -469,6 +512,9 @@ class ModelVersions(BaseModel):
         ..., description="The model version for reference extraction."
     )
     code: str = Field(..., description="The model version for code generation.")
+    validation: str = Field(
+        ..., description="The model version for code validation."
+    )
     review: str = Field(..., description="The model version for idea review.")
 
     def model_post_init(self, __context: dict[str, Any]) -> None:
@@ -484,6 +530,7 @@ class RunContext(BaseModel):
         json_encoders={pd.DataFrame: lambda df: df.to_dict(orient="records")},
     )
 
+    model_type: str = Field(..., description="The model type.")
     gen_config_dirc: str = Field(
         ..., description="The directory path for generated config."
     )
@@ -496,6 +543,7 @@ class RunContext(BaseModel):
     model_versions: ModelVersions = Field(
         ..., description="The model versions for each task."
     )
+    n_qubits: int = Field(..., description="The number of device qubits.")
     max_trial_num: int = Field(..., description="The maximum number of trial.")
     max_idea_num: int = Field(..., description="The maximum number of ideas.")
     max_suggestion_num: int = Field(
@@ -507,6 +555,9 @@ class RunContext(BaseModel):
     reflection_config: ReflectionConfig = Field(
         default_factory=ReflectionConfig,
         description="Configuration for reflection behavior",
+    )
+    best_idea_abstract: str = Field(
+        ..., description="The abstract of the best idea."
     )
     last_code: str = Field(
         ..., description="The code of the last implementation."

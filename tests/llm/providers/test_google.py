@@ -3,14 +3,16 @@ from typing import Any
 import pytest
 import pytest_mock
 from google.genai.types import (
+    Candidate,
+    Content,
     GenerateContentResponse,
     GenerateContentResponseUsageMetadata,
+    Part,
 )
 from pytest_mock import MockFixture
 
 from astronaut.llm.config import GoogleConfig
 from astronaut.llm.providers.google import GoogleChatClient
-from astronaut.schema import MessageHistory
 
 
 @pytest.fixture
@@ -40,30 +42,27 @@ def mock_sleep(mocker: MockFixture) -> None:
 def test_construct_message(google_chat_client: GoogleChatClient) -> None:
     """Test message construction for Google models."""
     user_prompt = {"role": "user", "content": "Hello"}
-    message_history: MessageHistory = []
+    message_history = []
 
     messages = google_chat_client._construct_message(
         user_prompt, message_history
     )
-    assert isinstance(messages, list)
-    assert messages[-1]["role"] == "user"
-    assert messages[-1]["content"] == "Hello"
+    assert isinstance(messages, str)
+    assert "user: Hello" in messages
 
 
 def test_update_history(google_chat_client: GoogleChatClient) -> None:
     """Test updating message history."""
     user_prompt = {"role": "user", "content": "Hello"}
-    message_history: MessageHistory = []
+    message_history = []
     content = "Hi there!"
 
     updated_history = google_chat_client._update_history(
         user_prompt, message_history, content
     )
     assert len(updated_history) == 2
-    assert updated_history[0]["role"] == "user"
-    assert updated_history[0]["content"] == "Hello"
-    assert updated_history[1]["role"] == "model"
-    assert updated_history[1]["content"] == "Hi there!"
+    assert "user: Hello" in updated_history[0]
+    assert "model: Hi there!" in updated_history[1]
 
 
 def test_get_model_name_from_version(
@@ -109,15 +108,12 @@ def test_get_token_count(google_chat_client: GoogleChatClient) -> None:
 
 def test_parse_response(google_chat_client: GoogleChatClient) -> None:
     """Test parsing response from Google completion."""
+    mock_part = Part(text="Test response")
+    mock_content = Content(parts=[mock_part])
+    mock_candidate = Candidate(content=mock_content)
+    mock_response = GenerateContentResponse(candidates=[mock_candidate])
 
-    class MockOutput:
-        text = "Test response"
-
-    class MockInteraction:
-        outputs = [MockOutput()]
-
-    mock_interaction = MockInteraction()
-    response = google_chat_client._parse_response(mock_interaction)
+    response = google_chat_client._parse_response(mock_response)
     assert response == "Test response"
 
 
@@ -126,22 +122,22 @@ def test_parse_chat(
     mocker: MockFixture, google_chat_client: GoogleChatClient, mock_sleep: None
 ) -> None:
     """Test parsing chat completion for Google model."""
-    mock_output = mocker.Mock()
-    mock_output.text = "Test response"
-
-    class MockUsage:
-        prompt_token_count = 10
-        cached_content_token_count = 5
-        candidates_token_count = 20
-
-    mock_interaction = mocker.Mock()
-    mock_interaction.outputs = [mock_output]
-    mock_interaction.usage_metadata = MockUsage()
-
-    mock_chat = mocker.patch.object(
-        google_chat_client.client.interactions, "create"
+    mock_part = Part(text="Test response")
+    mock_content = Content(parts=[mock_part])
+    mock_candidate = Candidate(content=mock_content)
+    mock_usage = GenerateContentResponseUsageMetadata(
+        prompt_token_count=10,
+        cached_content_token_count=5,
+        candidates_token_count=20,
     )
-    mock_chat.return_value = mock_interaction
+    mock_response = GenerateContentResponse(
+        candidates=[mock_candidate],
+        usage_metadata=mock_usage,
+    )
+    mock_chat = mocker.patch.object(
+        google_chat_client.client.models, "generate_content"
+    )
+    mock_chat.return_value = mock_response
 
     developer_prompt = {"content": "You are a helpful assistant"}
     user_prompt = {"role": "user", "content": "Hello"}

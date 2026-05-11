@@ -1,6 +1,6 @@
 from textwrap import dedent
 
-import astronaut.constants as exp_const
+from astronaut.constants import PENNYLANE_VERSION
 
 
 class FixCodePrompt:
@@ -9,7 +9,7 @@ class FixCodePrompt:
         code: str,
         error_messages: list[str],
         warning_messages: list[str],
-        pennylane_version: str = exp_const.PENNYLANE_VERSION,
+        pennylane_version: str = PENNYLANE_VERSION,
     ) -> None:
         self.code = code
         self.error_messages_string = (

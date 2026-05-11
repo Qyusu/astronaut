@@ -2,7 +2,7 @@ import contextvars
 import functools
 import json
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Any, Literal
+from typing import Literal
 
 from langsmith import traceable
 from langsmith.run_helpers import get_current_run_tree, tracing_context
@@ -10,7 +10,6 @@ from loguru import logger
 from openai.types.shared.reasoning_effort import ReasoningEffort
 from pinecone import QueryResponse
 
-import astronaut.constants as exp_const
 from astronaut.llm import ChatClient
 from astronaut.logics.common.paper import Paper
 from astronaut.prompts.common import SummaryPaperPrompt
@@ -60,7 +59,7 @@ class PaperSummarizer(Paper):
         self.reasoning_effort = reasoning_effort
         self.verbosity = verbosity
 
-    @traceable(tags=exp_const.LANGSMITH_SUMMARY_PAPER_TAGS)
+    @traceable(tags=["summary", "paper"])
     def summarize_papers(
         self,
         result: QueryResponse,
@@ -115,7 +114,7 @@ class PaperSummarizer(Paper):
         self,
         match_data: dict,
         max_paper_tokens: int | None = None,
-        parent_run_tree: Any | None = None,
+        parent_run_tree=None,
     ) -> tuple[str, float]:
         """
         Process a single paper for summarization with proper tracing context.
@@ -183,7 +182,7 @@ class PaperSummarizer(Paper):
             logger.info("Paper summarization done.")
 
             result = json.loads(response.content)
-            logger.debug(f"Paper summarization result: {result}")
+            logger.trace(f"Paper summarization result: {result}")
             summary_result = SummaryPaperResult(**result)
             return summary_result, response.cost
         except Exception as e:

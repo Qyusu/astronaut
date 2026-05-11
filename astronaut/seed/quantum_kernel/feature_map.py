@@ -27,10 +27,10 @@ class SeedFeatureMap(BaseFeatureMap):
 
     def feature_map(self, x: np.ndarray) -> None:
         """Create quantum circuit of feature map.
-        The input data is a single feature vector.
+        The input data is a sample of MNIST image data. It is decomposed into 80 features by PCA.
 
         Args:
-            x (np.ndarray): single feature vector
+            x (np.ndarray): input data shape is (80,).
         """
-        # define your quantum feature map below this line
+        # define your quantum feature map here
         pass

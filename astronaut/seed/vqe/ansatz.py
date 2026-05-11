@@ -1,3 +1,5 @@
+from typing import cast
+
 import pennylane as qml
 from qxmt.ansatze import BaseVQEAnsatz
 from qxmt.devices import BaseDevice
@@ -20,7 +22,7 @@ class BaseAnsatz(BaseVQEAnsatz):
         self, device: BaseDevice, hamiltonian: MolecularHamiltonian
     ) -> None:
         super().__init__(device, hamiltonian)
-        self.hamiltonian = hamiltonian
+        self.hamiltonian = cast(MolecularHamiltonian, self.hamiltonian)
         self.n_qubits = self.hamiltonian.get_n_qubits()
         self.n_params = 1  # number of parameters to be optimized. This value calculated in init method.
 
@@ -34,5 +36,5 @@ class BaseAnsatz(BaseVQEAnsatz):
                     Do not reassign or modify 'params' itself.
                     When using the parameters, access them by their index (e.g., params[0], params[1], ...).
         """
-        # define your ansatz below this line
+        # define your ansatz here
         pass

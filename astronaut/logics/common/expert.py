@@ -5,7 +5,6 @@ from langsmith import traceable
 from loguru import logger
 from openai.types.shared.reasoning_effort import ReasoningEffort
 
-import astronaut.constants as exp_const
 from astronaut.db import PineconeClient
 from astronaut.llm import ChatClient
 from astronaut.logics.common.paper import Paper
@@ -30,7 +29,7 @@ class PaperExpert(Paper):
         self.reasoning_effort = reasoning_effort
         self.verbosity = verbosity
 
-    @traceable(tags=exp_const.LANGSMITH_EXPERT_PAPER_TAGS)
+    @traceable(tags=["expert", "paper"])
     def request_expert_response(
         self,
         expert_role: str,
@@ -76,7 +75,7 @@ class PaperExpert(Paper):
             logger.info("Expert response done.")
 
             result = json.loads(response.content)
-            logger.debug(f"Expert response result: {result}")
+            logger.trace(f"Expert response result: {result}")
             expert_result = ExpertResult(**result)
             return expert_result, response.cost
         except Exception as e:

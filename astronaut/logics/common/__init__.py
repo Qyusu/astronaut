@@ -10,14 +10,7 @@ from astronaut.logics.common.expert import PaperExpert
 from astronaut.logics.common.generation import GenerateCode, GenerateIdea
 from astronaut.logics.common.paper import Paper
 from astronaut.logics.common.pennylane_reference import PennyLaneReference
-from astronaut.logics.common.reflection import (
-    DebateReflectionStrategy,
-    NoReflectionStrategy,
-    ReflectIdea,
-    ReflectionStrategy,
-    SelfReflectionStrategy,
-    create_reflection_strategy,
-)
+from astronaut.logics.common.reflection import ReflectIdea
 from astronaut.logics.common.researcher import Researcher
 from astronaut.logics.common.review import (
     ReviewIdea,
@@ -28,6 +21,7 @@ from astronaut.logics.common.scoring import ScoringIdea
 from astronaut.logics.common.summarization import PaperSummarizer
 from astronaut.logics.common.validation import (
     CodeValidationOrchestrator,
+    validate_generated_code,
 )
 
 __all__ = [
@@ -41,12 +35,7 @@ __all__ = [
     "GenerateIdea",
     "Paper",
     "PennyLaneReference",
-    "DebateReflectionStrategy",
-    "NoReflectionStrategy",
     "ReflectIdea",
-    "ReflectionStrategy",
-    "SelfReflectionStrategy",
-    "create_reflection_strategy",
     "Researcher",
     "ReviewIdea",
     "ReviewMetric",
@@ -54,4 +43,5 @@ __all__ = [
     "ScoringIdea",
     "PaperSummarizer",
     "CodeValidationOrchestrator",
+    "validate_generated_code",
 ]

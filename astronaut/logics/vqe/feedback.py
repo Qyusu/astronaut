@@ -1,16 +1,9 @@
-from __future__ import annotations
-
 from enum import Enum, auto
 from textwrap import dedent
-from typing import TYPE_CHECKING
 
 import pandas as pd
 
-import astronaut.logics.vqe.constants as vqe_const
-from astronaut.logics.vqe.schema import FeedbackTemplateVariables
-
-if TYPE_CHECKING:
-    from astronaut.schema import GeneratedResults
+from astronaut.schema import GeneratedResults
 
 
 class FeedbackFormatType(Enum):
@@ -23,7 +16,7 @@ class FeedbackFormatter:
     def __init__(
         self,
         format_type: FeedbackFormatType,
-        generated_results: "GeneratedResults",
+        generated_results: GeneratedResults,
         trial_result_df: pd.DataFrame,
         raw_result_df: pd.DataFrame | None = None,
     ) -> None:
@@ -102,25 +95,22 @@ class FeedbackFormatter:
             return "All experiments in current trial are failed. Not provided molecule and bond length results"
 
         molecule_bond_length_result_df = self.raw_result_df[
-            self.raw_result_df[vqe_const.IDEA_ID_COL] == idea_id
+            self.raw_result_df["idea_id"] == idea_id
         ]
         molecule_bond_length_result_df = (
             molecule_bond_length_result_df.sort_values(
-                [vqe_const.MOLECULE_NAME_COL, vqe_const.BOND_LENGTH_COL],
-                ascending=True,
+                ["molecule_name", "bond_length"], ascending=True
             )
         )
         molecule_bond_length_results_str = ""
         for (
             molecule_name,
             molecule_group,
-        ) in molecule_bond_length_result_df.groupby(
-            vqe_const.MOLECULE_NAME_COL
-        ):
+        ) in molecule_bond_length_result_df.groupby("molecule_name"):
             molecule_bond_length_results_str += f"- Molecule: {molecule_name}\n"
             for bond_length_row in molecule_group.iterrows():
-                bond_length = bond_length_row[1][vqe_const.BOND_LENGTH_COL]
-                cost = bond_length_row[1][vqe_const.COST_COL]
+                bond_length = bond_length_row[1]["bond_length"]
+                cost = bond_length_row[1]["cost"]
                 molecule_bond_length_results_str += f"  - Bond Length: {bond_length} [Å], Absolute Difference from Full CI: {cost} [Ha]\n"
 
         return (
@@ -139,42 +129,43 @@ class FeedbackFormatter:
         past_traials = []
         generated_result_list = self.generated_results.results
         sorted_result_df = self.trial_result_df.sort_values(
-            vqe_const.AGGREGATED_COST_COL, ascending=True
+            "aggregated_cost", ascending=True
         )
 
         for row in sorted_result_df.iterrows():
-            idea_id = str(row[1][vqe_const.IDEA_ID_COL])
+            idea_id = str(row[1]["idea_id"])
             idea_num = int(idea_id.split("_")[-1])
             idea_order.append(f'"Idea Number: {idea_num}"')
 
             current_result = generated_result_list[idea_num - 1]
 
+            format_kwargs = {
+                "idea_num": idea_num,
+                "idea_explanation": current_result.idea.explanation,
+                "idea_formula": current_result.idea.formula,
+                "num_gates_order": row[1]["num_gates_order"],
+                "num_params_order": row[1]["num_params_order"],
+                "run_time": row[1]["aggregated_run_time"],
+                "num_iter": row[1]["aggregated_num_iter"],
+                "cost": row[1]["aggregated_cost"],
+            }
+
             if include_molecule_details:
-                molecule_bond_length_results_str = (
+                format_kwargs["molecule_bond_length_results_str"] = (
                     self._get_molecule_bond_length_results(idea_id)
                 )
-            else:
-                molecule_bond_length_results_str = ""
-
-            format_kwargs = FeedbackTemplateVariables(
-                idea_num=idea_num,
-                idea_explanation=current_result.idea.explanation,
-                idea_formula=current_result.idea.formula,
-                num_gates_order=row[1][vqe_const.NUM_GATES_ORDER_COL],
-                num_params_order=row[1][vqe_const.NUM_PARAMS_ORDER_COL],
-                run_time=row[1][vqe_const.AGGREGATED_RUN_TIME_COL],
-                num_iter=row[1][vqe_const.AGGREGATED_NUM_ITER_COL],
-                cost=row[1][vqe_const.AGGREGATED_COST_COL],
-                molecule_bond_length_results_str=molecule_bond_length_results_str,
-            ).model_dump()
 
             past_traial = template.format(**format_kwargs)
             past_traials.append(past_traial)
 
         idea_order_str = (
-            "Current trial ideas sorted by cost from lowest to highest: "
+            "Current trial ideas sorted by cost (cost from lowest to highest): "
             + " < ".join(idea_order)
         )
         past_traials_str = "\n".join(past_traials)
 
         return f"{idea_order_str}\n{past_traials_str}"
+
+    def _format_image_by_trajectory(self) -> str:
+        # [TODO]: 各Bond lengthの最適化の軌跡を画像として入力
+        raise NotImplementedError

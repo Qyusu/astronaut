@@ -8,7 +8,6 @@ from pytest_mock import MockFixture
 
 from astronaut.llm.config import OpenAIConfig
 from astronaut.llm.providers.openai import OpenAIChatClient
-from astronaut.schema import MessageHistory
 
 
 class TestResponse(BaseModel):
@@ -36,7 +35,7 @@ def mock_sleep(mocker: MockFixture) -> None:
 
 def test_update_history(openai_chat_client: OpenAIChatClient) -> None:
     """Test updating message history."""
-    message_history: MessageHistory = []
+    message_history = []
     previous_response_id = "resp_6896fd"
 
     updated_history = openai_chat_client._update_history(

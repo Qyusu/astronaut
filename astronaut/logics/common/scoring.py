@@ -5,9 +5,11 @@ from typing import Literal
 from langsmith import traceable
 from loguru import logger
 from openai.types.shared.reasoning_effort import ReasoningEffort
-from pinecone import QueryResponse
 
-import astronaut.constants as exp_const
+from astronaut.constants import (
+    DEFAULT_MAX_SCORING_ROUND,
+    NOT_PROVIDED_INFORMATION,
+)
 from astronaut.db import PineconeClient
 from astronaut.llm import ChatClient
 from astronaut.prompts.common import ScoringIdeaPrompt
@@ -63,11 +65,11 @@ class ScoringIdea:
         self.reasoning_effort = reasoning_effort
         self.verbosity = verbosity
 
-    @traceable(tags=exp_const.LANGSMITH_SCORING_IDEA_TAGS)
+    @traceable(tags=["scoring", "idea"])
     def scoring_with_related_works(
         self,
         idea: GeneratedIdea,
-        max_scoring_round: int = exp_const.DEFAULT_MAX_SCORING_ROUND,
+        max_scoring_round: int = DEFAULT_MAX_SCORING_ROUND,
         max_paper_per_query: int = 1,
         score_histories: str = "",
     ) -> tuple[ScoringResult, float]:
@@ -105,7 +107,7 @@ class ScoringIdea:
                     seen_papers.extend([r["id"] for r in result["matches"]])
                 related_works_str = "\n--------------".join(related_works)
             else:
-                related_works_str = exp_const.NOT_PROVIDED_INFORMATION
+                related_works_str = NOT_PROVIDED_INFORMATION
 
             # Evaluate the generated idea and assign the score
             logger.info(f"Idea scoring round ({i}/{max_scoring_round})")
@@ -179,7 +181,7 @@ class ScoringIdea:
 
         return ScoringResult(**result), response.message_history, response.cost
 
-    def _format_fetch_paper(self, result: QueryResponse) -> list[str]:
+    def _format_fetch_paper(self, result) -> list[str]:
         papers = []
         for r in result["matches"]:
             paper = dedent(

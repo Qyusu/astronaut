@@ -9,8 +9,8 @@ import pdfplumber
 import requests
 from loguru import logger
 
-import astronaut.constants as exp_const
 from astronaut.configs import settings
+from astronaut.constants import PAPER_PDF_DIRC
 from astronaut.db.academic_papers.reference import (
     AcademicPaper,
     SearchReference,
@@ -64,7 +64,7 @@ class ArxivPaperDB:
         self.chunk_size = chunk_size
         self.max_results_per_request = max_results_per_request
         self.init_db = init_db
-        self.pdf_dir = f"{exp_const.PAPER_PDF_DIRC}/{self.index_name}"
+        self.pdf_dir = f"{PAPER_PDF_DIRC}/{self.index_name}"
         self.searcher = SearchReference()
 
         if settings.EMBEDDING_MODEL_VERSION is None:

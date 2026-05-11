@@ -8,7 +8,7 @@ from loguru import logger
 from openai.types.responses.tool_param import ParseableToolParam
 from openai.types.shared.reasoning_effort import ReasoningEffort
 
-import astronaut.constants as exp_const
+from astronaut.constants import PENNYLANE_REFERENCE_PATH
 from astronaut.llm import ChatClient
 from astronaut.logics.common.pennylane_reference import PennyLaneReference
 from astronaut.params import PennyLaneReferenceParams
@@ -47,7 +47,7 @@ class GenerateIdea:
         self.reasoning_effort = reasoning_effort
         self.verbosity = verbosity
 
-    @traceable(tags=exp_const.LANGSMITH_GENERATION_IDEA_TAGS)
+    @traceable(tags=["generation", "idea"])
     def generate(
         self,
         developer_prompt: dict[str, str],
@@ -130,16 +130,16 @@ class GenerateCode:
         self.pennylane_reference = PennyLaneReference(
             client=client,
             model_version=reference_model_version,
-            reference_path=exp_const.PENNYLANE_REFERENCE_PATH,
+            reference_path=PENNYLANE_REFERENCE_PATH,
             reasoning_effort=PennyLaneReferenceParams().reasoning_effort,
             verbosity=PennyLaneReferenceParams().verbosity,
         )
 
-    @traceable(tags=exp_const.LANGSMITH_GENERATION_CODE_TAGS)
+    @traceable(tags=["generation", "code"])
     def generate_codes(
         self,
         prompt_builder_fn: Callable[
-            [str, Any, str], tuple[dict[str, str], dict[str, str]]
+            [str, Any], tuple[dict[str, str], dict[str, str]]
         ],
         last_code: str,
         finalized_idea: GeneratedIdeaResult,
@@ -189,6 +189,12 @@ class GenerateCode:
                     logger.info("Retry to generate code...")
                     time.sleep(3)
 
+            # filtered_code_message_history = self._filter_message_history(
+            #     code_message_history,
+            #     message_idx=-2,  # latest user message
+            #     keyword="# PennyLane Reference",
+            # )
+            # message_history = filtered_code_message_history
             generated_results.append(generate_code_result)
 
         return (
@@ -228,3 +234,28 @@ class GenerateCode:
         logger.info("Generated code is done and result is parsed as JSON.")
 
         return GeneratedImpl(**result), response.message_history, response.cost
+
+    def _filter_message_history(
+        self,
+        message_history: MESSAGE_HISTORY_TYPE,
+        message_idx: int,
+        keyword: str,
+    ) -> MESSAGE_HISTORY_TYPE:
+        """Remove PennyLane reference from message history of user prompt.
+        This is because the reference is too long and it will cause the token limit error.
+
+        Args:
+            message_history (MESSAGE_HISTORY_TYPE): Message history to filter.
+            message_idx (int): Index of the target message in message history.
+            keyword (str): Keyword to filter.
+
+        Returns:
+            MESSAGE_HISTORY_TYPE: Filtered message history.
+        """
+        message = message_history[message_idx]
+        filtering_idx = message["content"].find(keyword)  # type: ignore
+        message["content"] = message["content"][:filtering_idx]  # type: ignore
+
+        message_history[message_idx] = message  # type: ignore
+
+        return message_history

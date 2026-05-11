@@ -10,11 +10,6 @@ from astronaut.logics.common.experiments.runner import (
     BaseSingleIdeaExperimentRunner,
     BaseTrialExecutor,
 )
-from astronaut.logics.common.experiments.executors import (
-    BaselineExecutor,
-    ExpandingExecutor,
-    TrialExecutor,
-)
 from astronaut.logics.common.experiments.utils import (
     format_batch_results,
     get_best_idea_abstract,
@@ -42,7 +37,4 @@ __all__ = [
     "setup_generated_dircs",
     "update_run_context",
     "update_score_histories",
-    "BaselineExecutor",
-    "ExpandingExecutor",
-    "TrialExecutor",
 ]

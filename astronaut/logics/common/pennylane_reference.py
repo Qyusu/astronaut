@@ -6,7 +6,6 @@ from langsmith import traceable
 from loguru import logger
 from openai.types.shared.reasoning_effort import ReasoningEffort
 
-import astronaut.constants as exp_const
 from astronaut.llm import ChatClient
 from astronaut.prompts.common import RelatedReferencePrompt
 from astronaut.schema import PennyLaneReferenceResult
@@ -49,7 +48,7 @@ class PennyLaneReference:
     def get_full_reference(self) -> dict[str, dict[str, list[dict[str, str]]]]:
         return self.reference
 
-    @traceable(tags=exp_const.LANGSMITH_PENNYLANE_REFERENCE_TAGS)
+    @traceable(tags=["pennylane_reference"])
     def extract_related_method_names(self, idea: str) -> list[str]:
         if self.client is None:
             raise ValueError(

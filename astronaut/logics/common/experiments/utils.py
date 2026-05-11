@@ -7,14 +7,27 @@ import qxmt
 from loguru import logger
 
 from astronaut.configs import settings
-import astronaut.constants as exp_const
-import astronaut.schema as base_schema
+from astronaut.constants import GENERATED_CODE_DIRC, GENERATED_CONFIG_DIRC, PAPER_PDF_DIRC
+from astronaut.schema import (
+    GeneratedIdea,
+    GeneratedImpl,
+    GeneratedResult,
+    GeneratedResults,
+    IdeaScore,
+    MessageHistory,
+    MessageHistoryNum,
+    ModelVersions,
+    RunContext,
+    Score,
+    ReflectionConfig,
+    ReflectionType,
+)
 
 
 def setup_generated_dircs(
     experiment_name: str,
-    config_dirc: str = exp_const.GENERATED_CONFIG_DIRC,
-    code_dirc: str = exp_const.GENERATED_CODE_DIRC,
+    config_dirc: str = GENERATED_CONFIG_DIRC,
+    code_dirc: str = GENERATED_CODE_DIRC,
 ) -> tuple[str, str]:
     """Set up generated configuration and code directories for the experiment.
 
@@ -43,7 +56,7 @@ def initialize_run_context_base(
     max_idea_num: int,
     max_suggestion_num: int,
     max_scoring_round: int,
-    reflection_type: base_schema.ReflectionType,
+    reflection_type: ReflectionType,
     max_reflection_round: int,
     seed_code: str,
 ) -> dict[str, Any]:
@@ -63,10 +76,10 @@ def initialize_run_context_base(
         dict: Base context data that can be extended by specific experiment types
     """
     gen_config_dirc, gen_code_dirc = setup_generated_dircs(str(experiment.name))
-    local_paper_dir = f"{exp_const.PAPER_PDF_DIRC}/{settings.ARXIV_INDEX_NAME}"
-    model_versions = base_schema.ModelVersions(
+    local_paper_dir = f"{PAPER_PDF_DIRC}/{settings.ARXIV_INDEX_NAME}"
+    model_versions = ModelVersions(
         default=settings.DEFAULT_MODEL_VERSION,
-        expanding=settings.EXPANDING_MODEL_VERSION,
+        filtering=settings.FILTERING_MODEL_VERSION,
         idea=settings.IDEA_MODEL_VERSION,
         scoring=settings.SCORING_MODEL_VERSION,
         summary=settings.SUMMARY_MODEL_VERSION,
@@ -74,11 +87,12 @@ def initialize_run_context_base(
         reflection=settings.REFLECTION_MODEL_VERSION,
         reference=settings.REFERENCE_EXTRACTION_MODEL_VERSION,
         code=settings.CODE_MODEL_VERSION,
+        validation=settings.VALIDATION_MODEL_VERSION,
         review=settings.REVIEW_MODEL_VERSION,
     )
 
     # Create reflection config based on max_reflection_round
-    reflection_config = base_schema.ReflectionConfig(
+    reflection_config = ReflectionConfig(
         type=reflection_type,
         max_rounds=max_reflection_round,
     )
@@ -93,19 +107,20 @@ def initialize_run_context_base(
         "max_suggestion_num": max_suggestion_num,
         "max_scoring_round": max_scoring_round,
         "reflection_config": reflection_config,
+        "best_idea_abstract": "",
         "last_code": seed_code,
         "total_cost": 0.0,
         "need_idea_review": False,  # first iteration does not need idea review
         "review_comment": "",
         "last_trial_results": "",
         "score_histories": "",
-        "message_history": base_schema.MessageHistory(),
-        "n_message_history": base_schema.MessageHistoryNum(),
+        "message_history": MessageHistory(),
+        "n_message_history": MessageHistoryNum(),
         "eval_result_df": pd.DataFrame(),
     }
 
 
-def update_run_context(context: base_schema.RunContext, **updates: Any) -> base_schema.RunContext:
+def update_run_context(context: RunContext, **updates: Any) -> RunContext:
     """Update the run context with new values.
 
     Args:
@@ -120,7 +135,7 @@ def update_run_context(context: base_schema.RunContext, **updates: Any) -> base_
     """
     updated_key_list = []
     for key in updates:
-        if key in list(base_schema.RunContext.model_fields.keys()):
+        if key in list(RunContext.model_fields.keys()):
             updated_key_list.append(key)
         else:
             raise ValueError(f"Invalid key: {key}")
@@ -156,7 +171,7 @@ def get_best_result_id(
     return str(best_value)
 
 
-def get_best_idea_abstract(best_idea: base_schema.GeneratedResult) -> str:
+def get_best_idea_abstract(best_idea: GeneratedResult) -> str:
     """Get formatted abstract of the best idea.
 
     Args:
@@ -182,7 +197,7 @@ def get_best_idea_abstract(best_idea: base_schema.GeneratedResult) -> str:
 
 
 def update_score_histories(
-    score_histories: str, generate_results: base_schema.GeneratedResults
+    score_histories: str, generate_results: GeneratedResults
 ) -> str:
     """Update score histories with new results.
 
@@ -218,10 +233,10 @@ def update_score_histories(
 
 
 def format_batch_results(
-    ideas: list[base_schema.GeneratedIdea],
-    scores: list[base_schema.IdeaScore | None],
-    implements: list[base_schema.GeneratedImpl],
-) -> base_schema.GeneratedResults:
+    ideas: list[GeneratedIdea],
+    scores: list[IdeaScore | None],
+    implements: list[GeneratedImpl],
+) -> GeneratedResults:
     """Format batch results into a GeneratedResults object.
 
     Args:
@@ -235,8 +250,8 @@ def format_batch_results(
 
     results = []
     for i in range(len(ideas)):
-        result = base_schema.GeneratedResult(
+        result = GeneratedResult(
             idea=ideas[i], score=scores[i], implement=implements[i]
         )
         results.append(result)
-    return base_schema.GeneratedResults(results=results)
+    return GeneratedResults(results=results)

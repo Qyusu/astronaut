@@ -8,8 +8,6 @@ from langsmith import traceable
 from loguru import logger
 from pydantic import BaseModel
 
-import astronaut.constants as exp_const
-
 ATOM_NAMESPACE = "{http://www.w3.org/2005/Atom}"
 ARXIV_API_URL = "http://export.arxiv.org/api/query"
 
@@ -166,7 +164,7 @@ class SearchReference:
 
         raise Exception(f"Failed to fetch data after {max_retry} retries.")
 
-    @traceable(tags=exp_const.LANGSMITH_RETRIEVAL_ARXIV_TAGS)
+    @traceable(tags=["retreival", "arxiv"])
     def search_arxiv(
         self,
         query: str | list[str],

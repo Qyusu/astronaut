@@ -1,27 +1,19 @@
-from __future__ import annotations
-
 from abc import ABC, abstractmethod
-import traceback
-from typing import Any, TYPE_CHECKING
+from typing import Any
 
 import pandas as pd
-from loguru import logger
 
-from astronaut.logics.common import save_generated_code
-import astronaut.schema as base_schema
-
-
-if TYPE_CHECKING:
-    from astronaut.logics.common.experiments import ExperimentDependencies
-    from astronaut.logics.common.validation import CodeValidationOrchestrator
+from astronaut.logics.common.experiments import ExperimentDependencies
+from astronaut.logics.common.validation import CodeValidationOrchestrator
+from astronaut.schema import GeneratedResult, GeneratedResults, RunContext
 
 
 class BaseExperimentRunner(ABC):
     """Abstract base class for all experiment runners."""
 
-    def __init__(self, dependencies: "ExperimentDependencies") -> None:
-        self.deps: "ExperimentDependencies" = dependencies
-        self.context: base_schema.RunContext | None = None
+    def __init__(self, dependencies: ExperimentDependencies) -> None:
+        self.deps: ExperimentDependencies = dependencies
+        self.context: RunContext | None = None
         self.reviewer: Any = None
         self.trial_executor: Any = None
 
@@ -58,7 +50,7 @@ class BaseExperimentRunner(ABC):
 
     def _review_trial_if_needed(
         self, trial_num: int
-    ) -> tuple[base_schema.RunContext, float, bool]:
+    ) -> tuple[RunContext, float, bool]:
         """Review previous trial results if needed."""
         if not self.context or not self.reviewer:
             raise ValueError("Components not initialized")
@@ -72,7 +64,7 @@ class BaseExperimentRunner(ABC):
         return updated_context, review_cost, is_completed
 
     @abstractmethod
-    def _execute_trial(self, trial_num: int) -> None:
+    def _execute_trial(self, trial_num: int):
         """Execute a single trial.
 
         This method should be implemented by concrete classes to handle
@@ -88,17 +80,16 @@ class BaseExperimentRunner(ABC):
         pass
 
     def _log_trial_completion(
-        self, trial_num: int, cost: float, raw_result_df: pd.DataFrame, aggregated_result_df: pd.DataFrame
+        self, trial_num: int, cost: float, result_df: pd.DataFrame
     ) -> None:
         """Log completion of a trial."""
         from loguru import logger
 
         logger.info(f"Trial {trial_num} is done. [COST]: ${cost:.2f}")
-        logger.debug(f"Raw Result:\n{raw_result_df}")
-        logger.info(f"Evaluation Result:\n{aggregated_result_df}")
+        logger.info(f"Evaluation Result:\n{result_df}")
         logger.info("######################################################")
 
-    def _log_experiment_completion(self, raw_result_df: pd.DataFrame, aggregated_result_df: pd.DataFrame) -> None:
+    def _log_experiment_completion(self, result_df: pd.DataFrame) -> None:
         """Log completion of the entire experiment."""
         from loguru import logger
 
@@ -109,14 +100,13 @@ class BaseExperimentRunner(ABC):
         logger.info(
             f"All trials are done. Total Cost: ${self.context.total_cost:.2f}"
         )
-        logger.debug(f"Raw Result:\n{raw_result_df}")
-        logger.info(f"All trials Result:\n{aggregated_result_df}")
+        logger.info(f"All trials Result:\n{result_df}")
 
 
 class BaseSingleIdeaExperimentRunner(ABC):
     """Abstract base class for single idea experiment execution."""
 
-    def __init__(self, experiment: Any, context: base_schema.RunContext) -> None:
+    def __init__(self, experiment: Any, context: RunContext) -> None:
         self.experiment = experiment
         self.context = context
 
@@ -136,7 +126,7 @@ class BaseIdeaProcessor(ABC):
     def __init__(
         self,
         dependencies: ExperimentDependencies,
-        context: base_schema.RunContext,
+        context: RunContext,
         dry_run_config_path: str,
         code_file_prefix: str,
     ) -> None:
@@ -145,101 +135,44 @@ class BaseIdeaProcessor(ABC):
         self.dry_run_config_path = dry_run_config_path
         self.code_file_prefix = code_file_prefix
 
-        self.validation_orchestrator: "CodeValidationOrchestrator"
+        # Initialize validation orchestrator for reuse across idea processing
+        self.validation_orchestrator: CodeValidationOrchestrator
 
+    @abstractmethod
     def process_idea(
-        self, result: base_schema.GeneratedResult, idea_id: str
-    ) -> tuple[base_schema.GeneratedResult, pd.Series, pd.DataFrame, float]:
-        """Process a single idea through validation and experiment execution."""
+        self, result: GeneratedResult, trial_num: int, idea_num: int
+    ):
+        """Process a single idea through validation and experiment execution.
 
-        try:
-            config_list = self._build_dry_run_config_list(
-                implement_name=result.implement.class_name
-            )
-
-            validated_result, validation_cost = (
-                self._common_validation_and_save(
-                    result,
-                    config_list,
-                    save_file_name=f"{self.code_file_prefix}_{idea_id}.py",
-                )
-            )
-
-            raw_result_df = self._run_experiments(validated_result, idea_id)
-            aggregated_series = self._aggregate_results(idea_id, raw_result_df, validated_result)
-
-            return (
-                validated_result,
-                aggregated_series,
-                raw_result_df,
-                validation_cost,
-            )
-
-        except Exception as e:
-            logger.debug(traceback.format_exc())
-            logger.error(f"Error occurred in processing idea {idea_id}: {e}")
-
-            validated_result = base_schema.GeneratedResult(
-                idea=result.idea, score=result.score, implement=result.implement
-            )
-            aggregated_series, raw_result_df = self._create_dummy_result(idea_id)
-            return validated_result, aggregated_series, raw_result_df, 0.0
-
-    @abstractmethod
-    def _run_experiments(
-        self, validated_result: base_schema.GeneratedResult, idea_id: str
-    ) -> pd.DataFrame:
-        """Run experiments for the validated result."""
+        Each concrete class should implement this with their specific return pattern.
+        """
         pass
 
-    @abstractmethod
-    def _aggregate_results(
-        self, idea_id: str, raw_result_df: pd.DataFrame, validated_result: base_schema.GeneratedResult
-    ) -> pd.Series:
-        """Aggregate experiment results."""
-        pass
-
-    @abstractmethod
-    def _create_dummy_result(
-        self, idea_id: str
-    ) -> tuple[pd.Series, pd.DataFrame]:
-        """Create dummy results in case of failure."""
-        pass
-
-    @abstractmethod
-    def _build_dry_run_config_list(self, implement_name: str) -> list[dict]:
-        """Build dry run config list."""
-        pass
-
-    def update_context(self, context: base_schema.RunContext) -> None:
+    def update_context(self, context: RunContext) -> None:
         """Update the context for this idea processor and its components."""
         self.context = context
+        # Update validation orchestrator context if needed
         if self.validation_orchestrator:
             self.validation_orchestrator.context = context
 
     def _common_validation_and_save(
-        self, result: base_schema.GeneratedResult, config_list: list[dict], save_file_name: str
-    ) -> tuple[base_schema.GeneratedResult, float]:
-        """Common validation and code saving logic.
-
-        Args:
-            result: Generated result.
-            config_list: List of validation configs.
-            save_file_name: File name to save the generated code.
-
-        Returns:
-            Tuple of validated result and validation cost.
-        """
+        self, result: GeneratedResult, idea_id: str
+    ) -> tuple[GeneratedResult, float]:
+        """Common validation and code saving logic."""
         if not self.validation_orchestrator:
             raise ValueError("Validation orchestrator not initialized")
 
         try:
+            # Validate generated code using orchestrator
             validated_result, validation_cost = (
-                self.validation_orchestrator.validate_and_retry(result, config_list)
+                self.validation_orchestrator.validate_and_retry(result)
             )
 
+            # Save generated code
+            from astronaut.logics.common import save_generated_code
+
             save_generated_code(
-                f"{self.context.gen_code_dirc}/{save_file_name}",
+                f"{self.context.gen_code_dirc}/{self.code_file_prefix}_{idea_id}.py",
                 validated_result.implement.code,
             )
 
@@ -260,12 +193,12 @@ class BaseTrialExecutor(ABC):
     @abstractmethod
     def execute_trial(
         self, trial_num: int
-    ) -> tuple[base_schema.GeneratedResults, pd.DataFrame, float, base_schema.RunContext]:
+    ) -> tuple[GeneratedResults, pd.DataFrame, float, RunContext]:
         """Execute a single trial including idea generation and processing."""
         pass
 
     @abstractmethod
-    def update_context(self, context: base_schema.RunContext) -> None:
+    def update_context(self, context: RunContext) -> None:
         """Update the context for this trial executor."""
         pass
 
@@ -276,7 +209,7 @@ class BaseExperimentReviewer(ABC):
     @abstractmethod
     def review_if_needed(
         self, trial_num: int
-    ) -> tuple[base_schema.RunContext, float, bool]:
+    ) -> tuple[RunContext, float, bool]:
         """Review previous trial results if needed."""
         pass
 

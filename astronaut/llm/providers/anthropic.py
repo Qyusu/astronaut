@@ -1,40 +1,34 @@
 import re
 import time
 import traceback
+from textwrap import dedent
 from typing import Type, cast
 
 import anthropic
 from anthropic.types import Message, MessageParam
 from loguru import logger
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, ValidationError
 
+from astronaut.configs import settings
+from astronaut.constants import ANTHOROPIC_THINKING_SERIES
 from astronaut.llm.base import BaseLLMClient
+from astronaut.llm.providers.openai import OpenAIChatClient
+from astronaut.prompts.common import ParseJsonPrompt
 from astronaut.schema import (
     ANTHOROPIC_MESSAGE_HISTORY_TYPE,
     MESSAGE_HISTORY_TYPE,
+    get_schema_string,
 )
 
-
-class _AnthropicResponseParser:
-    """Utility parser for validating and normalizing Anthropic responses."""
-
-    def parse_chat(
-        self,
-        raw_content: str,
-        response_format: Type[BaseModel] | None = None,
-    ) -> tuple[str, MESSAGE_HISTORY_TYPE, float]:
-        if response_format is not None:
-            try:
-                response_format.model_validate_json(raw_content)
-            except ValidationError as exc:
-                raise ValueError(
-                    "Anthropic response does not match the expected schema."
-                ) from exc
-
-        return raw_content, [], 0.0
-
-
-parse_chat = _AnthropicResponseParser()
+# Anthropic API doesn't support "response_format".
+# So, we use OpenAI API to parse the response.
+if settings.OPENAI_API_KEY is not None:
+    parse_client = OpenAIChatClient(
+        api_key=settings.OPENAI_API_KEY,
+        default_model_version="gpt-4o-mini-2024-07-18",
+    )
+else:
+    parse_client = None
 
 
 class AnthropicChatClient(BaseLLMClient):
@@ -174,26 +168,35 @@ class AnthropicChatClient(BaseLLMClient):
             ANTHOROPIC_MESSAGE_HISTORY_TYPE,
             self._get_last_n_history(message_history, n_history),
         )
-        messages = self._construct_message(user_prompt, history)
-        tools = self._response_format_to_tools(response_format)
+        messages = self._construct_message(
+            user_prompt, history, response_format=response_format
+        )
         attempts = 0
 
         max_tokens = None
         while True:
             try:
-                max_tokens = max_tokens or self.basic_model_max_tokens
-                response = self._chat(
-                    model_version=model_version,
-                    developer_prompt=developer_prompt,
-                    messages=messages,
-                    max_tokens=max_tokens,
-                    temperature=temperature,
-                    tools=tools,
-                )
+                if model_version in ANTHOROPIC_THINKING_SERIES:
+                    max_tokens = max_tokens or self.thinking_model_max_tokens
+                    response = self._chat_thinking_model(
+                        model_version=model_version,
+                        developer_prompt=developer_prompt,
+                        messages=messages,
+                        max_tokens=max_tokens,
+                        max_thinking_tokens=max_thinking_tokens
+                        or self.max_thinking_budget_tokens,
+                    )
+                else:
+                    max_tokens = max_tokens or self.basic_model_max_tokens
+                    response = self._chat(
+                        model_version=model_version,
+                        developer_prompt=developer_prompt,
+                        messages=messages,
+                        max_tokens=max_tokens,
+                        temperature=temperature,
+                    )
 
-                content = self._parse_response(
-                    response, response_format=response_format
-                )
+                content = self._parse_response(response, response_format)
                 updated_message_history = self._update_history(
                     user_prompt,
                     cast(ANTHOROPIC_MESSAGE_HISTORY_TYPE, message_history),
@@ -229,46 +232,24 @@ class AnthropicChatClient(BaseLLMClient):
         self,
         user_prompt: dict[str, str],
         message_history: ANTHOROPIC_MESSAGE_HISTORY_TYPE,
+        response_format: Type[BaseModel] | None = None,
     ) -> list[MessageParam]:
+        if response_format is not None:
+            user_content = user_prompt["content"] + dedent(
+                """\nProvide a response strictly in below JSON format.
+                Do not include any additional commentary or text outside of the JSON object.\n
+                {schema_string}
+                """.format(schema_string=get_schema_string(response_format))
+            )
+        else:
+            user_content = user_prompt["content"]
+
         user_message = MessageParam(
-            role="user",
-            content=[{"type": "text", "text": user_prompt["content"]}],
+            role="user", content=[{"type": "text", "text": user_content}]
         )
         messages = message_history + [user_message]
 
         return messages
-
-    def _wrap_for_json_string(
-        self,
-        response_format: type[BaseModel],
-    ) -> type[BaseModel]:
-        class JsonWrapped(BaseModel):
-            json_string: str = Field(
-                description=f"A valid JSON string conforming to {response_format.__name__}."
-            )
-
-        return JsonWrapped
-
-    def _response_format_to_tools(
-        self, response_format: Type[BaseModel] | None
-    ) -> list[dict]:
-        if response_format is None:
-            return []
-
-        tools = [
-            {
-                "name": "format_response_schema",
-                "description": (
-                    "Return a valid JSON string in field `json_string` that matches "
-                    f"the {response_format.__name__} schema."
-                ),
-                "input_schema": self._wrap_for_json_string(
-                    response_format
-                ).model_json_schema(),
-            }
-        ]
-
-        return tools
 
     def _update_history(
         self,
@@ -285,27 +266,6 @@ class AnthropicChatClient(BaseLLMClient):
 
         return updated_message_history
 
-    def _chat(
-        self,
-        model_version: str,
-        developer_prompt: dict[str, str],
-        messages: list[MessageParam],
-        max_tokens: int,
-        temperature: float,
-        tools: list[dict],
-    ) -> Message:
-        response = self.client.messages.create(
-            model=model_version,
-            system=developer_prompt.get("content", ""),
-            messages=messages,
-            max_tokens=max_tokens,
-            temperature=temperature,
-            tools=tools,  # type: ignore
-            tool_choice={"type": "tool", "name": "format_response_schema"},
-        )
-
-        return response
-
     def _chat_thinking_model(
         self,
         model_version: str,
@@ -313,7 +273,6 @@ class AnthropicChatClient(BaseLLMClient):
         messages: list[MessageParam],
         max_tokens: int,
         max_thinking_tokens: int,
-        tools: list[dict],
     ) -> list[Message]:
         response = self.client.messages.create(
             model=model_version,
@@ -322,7 +281,6 @@ class AnthropicChatClient(BaseLLMClient):
             max_tokens=max_tokens,
             thinking={"type": "enabled", "budget_tokens": max_thinking_tokens},
             stream=True,
-            tools=tools,  # type: ignore
         )
 
         collected_responses = []
@@ -330,6 +288,24 @@ class AnthropicChatClient(BaseLLMClient):
             collected_responses.append(chunk)
 
         return collected_responses
+
+    def _chat(
+        self,
+        model_version: str,
+        developer_prompt: dict[str, str],
+        messages: list[MessageParam],
+        max_tokens: int,
+        temperature: float,
+    ) -> Message:
+        response = self.client.messages.create(
+            model=model_version,
+            system=developer_prompt.get("content", ""),
+            messages=messages,
+            max_tokens=max_tokens,
+            temperature=temperature,
+        )
+
+        return response
 
     def _get_model_name_from_version(self, model_version: str) -> str:
         return re.sub(r"[-_](\d+|latest)$", "", model_version)
@@ -340,7 +316,7 @@ class AnthropicChatClient(BaseLLMClient):
         # [TODO]: Support cached_tokens reffer to the below link.
         # https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching#tracking-cache-performance
         if isinstance(response, list):  # for thinking model
-            input_tokens, chached_tokens, output_tokens = 0, 0, 0
+            input_tokens, output_tokens = 0, 0
             for message in response:
                 if message.type == "message_start":
                     input_tokens = message.message.usage.input_tokens
@@ -354,22 +330,20 @@ class AnthropicChatClient(BaseLLMClient):
                 return 0, 0, 0
 
             input_tokens = usage.input_tokens
-            chached_tokens = usage.cache_read_input_tokens or 0
             output_tokens = usage.output_tokens
 
         return (
             input_tokens,
-            chached_tokens,
+            0,
             output_tokens,
-        )
+        )  # Anthropic doesn't provide cached_tokens
 
     def _parse_response(
         self,
         response: Message | list[Message],
-        response_format: Type[BaseModel] | None = None,
+        response_format: Type[BaseModel] | None,
     ) -> str:
         try:
-            content = ""
             if isinstance(response, list):  # for thinking model
                 stream_content = []
                 for message in response:
@@ -379,22 +353,34 @@ class AnthropicChatClient(BaseLLMClient):
                     ):
                         stream_content.append(message.delta.text)
 
-                content = "".join(stream_content)
+                raw_content = "".join(stream_content)
             else:  # for standard model
-                raw_content = response.content[0]
-                if raw_content.type == "tool_use":
-                    content = str(raw_content.input.get("json_string", ""))
-                elif raw_content.type == "text":
-                    content = raw_content.text
-                else:
+                raw_content = response.content
+                if raw_content is None:
                     raise ValueError(
-                        f"Unsupported content type: {raw_content.type}"
+                        "Anthropic response content is None or empty."
                     )
 
-            parsed_content, _, _ = parse_chat.parse_chat(
-                raw_content=content,
-                response_format=response_format,
-            )
-            return parsed_content
-        except (KeyError, AttributeError, IndexError) as e:
+                if isinstance(raw_content, list):
+                    raw_content = "".join(
+                        block.text
+                        for block in raw_content
+                        if block.type == "text"
+                    )
+
+            if parse_client is not None:
+                developer_prompt, user_prompt = ParseJsonPrompt(
+                    raw_content
+                ).build()
+                content, _, _ = parse_client.parse_chat(
+                    developer_prompt=developer_prompt,
+                    user_prompt=user_prompt,
+                    message_history=[],
+                    n_history=0,
+                    n=1,
+                    response_format=response_format,
+                )
+
+            return content
+        except (KeyError, AttributeError) as e:
             raise ValueError(f"Failed to parse Anthropic response: {e}")

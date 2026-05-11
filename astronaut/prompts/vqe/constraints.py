@@ -3,7 +3,7 @@ from textwrap import dedent
 REFLECTION_EXPERTISE = "quantum chemistry computation and machine learning"
 
 ANSATZ_CONSTRAINTS = dedent(
-    """The VQE ansatz |\\Psi(\\theta)\\rangle will be used to approximate the ground state of a given Hamiltonian by variational minimization of \\langle\\Psi(\\theta)|H|\\Psi(\\theta)\\rangle.
+    """The VQE ansatz |Ψ(θ)⟩ will be used to approximate the ground state of a given Hamiltonian by variational minimization of ⟨Ψ(θ)|H|Ψ(θ)⟩.
 
     1. **Ansatz Design Requirements**:
         - Define the sequence and combination of parameterized quantum gates (e.g., single-qubit rotations, controlled-NOT layers).
@@ -39,7 +39,7 @@ COST_FUNCTION_DEFINITION = dedent(
     """The cost function is defined as the mean absolute error between the Full Configuration Interaction (FCI) energy and the energy estimated by the Variational Quantum Eigensolver (VQE) across multiple molecules and bond lengths. This metric quantifies how accurately the VQE approach reproduces the ground state energy in comparison to the exact FCI results.
 
     The cost function is given by the following formula:
-        Cost = \\sum_{i,j} |E_FCI^(i,j) - E_VQE^(i,j)| / (M * N)
+        Cost = ∑_{i,j} |E_FCI^(i,j) - E_VQE^(i,j)| / (M * N)
 
     Where:
     - M is the number of molecules evaluated.
@@ -51,7 +51,7 @@ COST_FUNCTION_DEFINITION = dedent(
 
 MOLECULE_HAMILTONIAN_DEFINITION = dedent(
     """The Hamiltonian used in quantum chemistry calculations is given in second quantization form as:
-    H = \\sum_{{p,q}} h_{{pq}} c†_p c_q + (1/2) \\sum_{{p,q,r,s}} h_{{pqrs}} c†_p c†_q c_r c_s
+    H = ∑_{{p,q}} h_{{pq}} c†_p c_q + (1/2) ∑_{{p,q,r,s}} h_{{pqrs}} c†_p c†_q c_r c_s
 
     This Hamiltonian describes the behavior of electrons in a molecular system. It is expressed in terms of fermionic creation (c†) and annihilation (c) operators, which satisfy anticommutation relations.
     - h_{{pq}} are the one-electron integrals, representing kinetic energy and nuclear attraction.

@@ -1,7 +1,3 @@
-import shutil
-from pathlib import Path
-from typing import Generator
-
 import pytest
 
 from astronaut.llm import ChatClient
@@ -13,7 +9,7 @@ from astronaut.schema import ModelVersions
 def model_versions() -> ModelVersions:
     return ModelVersions(
         default="gpt-5",
-        expanding="gpt-5",
+        filtering="gpt-5",
         idea="gpt-5",
         scoring="gpt-5",
         summary="gpt-5",
@@ -43,19 +39,3 @@ def review_idea(
         client=llm_client,
         model_version=model_versions.review,
     )
-
-
-@pytest.fixture(scope="session", autouse=True)
-def cleanup_magicmock_dirs() -> Generator[None, None, None]:
-    """Clean up directories starting with <MagicMock or <Mock generated during tests."""
-    yield
-    generated_dir = Path(__file__).parent.parent / "astronaut" / "generated"
-    if generated_dir.exists() and generated_dir.is_dir():
-        for path in generated_dir.iterdir():
-            if (path.name.startswith("<MagicMock")) or (
-                path.name.startswith("<Mock")
-            ):
-                if path.is_dir():
-                    shutil.rmtree(path)
-                else:
-                    path.unlink()

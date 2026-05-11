@@ -5,7 +5,6 @@ from textwrap import dedent
 from astronaut.prompts.quantum_kernel.constraints import (
     FEATURE_MAP_CONSTRAINTS,
     INPUT_DATA_CONSTRAINTS,
-    PERFORMANCE_METRIC_DEFINITION,
 )
 
 
@@ -13,11 +12,9 @@ class BaseGenerateFeatureMapIdeaPrompt:
     def __init__(
         self,
         feature_map_constraints: str = FEATURE_MAP_CONSTRAINTS.strip(),
-        performance_metric_definition: str = PERFORMANCE_METRIC_DEFINITION.strip(),
         input_data_constraints: str = INPUT_DATA_CONSTRAINTS.strip(),
     ) -> None:
         self.feature_map_constraints = feature_map_constraints
-        self.performance_metric_definition = performance_metric_definition
         self.input_data_constraints = input_data_constraints
 
         self.developer_template = dedent(
@@ -27,7 +24,7 @@ class BaseGenerateFeatureMapIdeaPrompt:
 
 
             # Task and Objective
-            Your task is to create a quantum feature map that will serve as the kernel function in a QSVM classifier, with the objective to **maximize performance metric**. Ideas are improved incrementally through multiple trials and their feedback results. Your strategy should adapt based on the user's instructions:
+            Your task is to create a quantum feature map that will serve as the kernel function in a QSVM classifier, with the objective to **maximize the classification accuracy**. Ideas are improved incrementally through multiple trials and their feedback results. Your strategy should adapt based on the user's instructions:
 
             - **Exploration strategy**: When instructed to explore, or during early trials, conduct broad exploration across diverse architecture-level approaches to identify promising directions.
             - **Refinement strategy**: When instructed to refine, use feedback from previous trials to gradually narrow idea diversity and focus on specific improvements to achieve high performance.
@@ -38,8 +35,6 @@ class BaseGenerateFeatureMapIdeaPrompt:
             # Feature Map Constraints
             {feature_map_constraints}
 
-            # Performance Metric Definition
-            {performance_metric_definition}
 
             # Input Data Constraints
             {input_data_constraints}
@@ -72,7 +67,6 @@ class BaseGenerateFeatureMapIdeaPrompt:
     def _build_developer_prompt(self) -> dict[str, str]:
         developer_content = self.developer_template.format(
             feature_map_constraints=self.feature_map_constraints,
-            performance_metric_definition=self.performance_metric_definition,
             input_data_constraints=self.input_data_constraints,
         )
         return {"role": "developer", "content": developer_content}
@@ -108,7 +102,7 @@ class ResearchBasedFeatureMapIdeaPrompt(BaseGenerateFeatureMapIdeaPrompt):
         return developer_prompt, user_prompt
 
 
-class ExpandingFeatureMapIdeaPrompt(BaseGenerateFeatureMapIdeaPrompt):
+class FilteringFeatureMapIdeaPrompt(BaseGenerateFeatureMapIdeaPrompt):
     def _build_user_prompt(
         self, idea_num: int, experiment_report: str
     ) -> dict[str, str]:

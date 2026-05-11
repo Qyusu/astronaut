@@ -1,12 +1,6 @@
-from typing import Any
-
 from astronaut.llm.config import LLMConfig, LLMProvider
 from astronaut.llm.factory import LLMClientFactory
-from astronaut.llm.models import (
-    ChatRequest,
-    ChatResponse,
-    OpenAIChatRequest,
-)
+from astronaut.llm.models import ChatRequest, ChatResponse, OpenAIChatRequest
 
 
 class ChatClient:
@@ -36,7 +30,7 @@ class ChatClient:
         self,
         developer_prompt: dict[str, str],
         user_prompt: dict[str, str],
-        **kwargs: dict[str, Any],
+        **kwargs,
     ) -> ChatResponse:
         if self.config.provider == LLMProvider.OPENAI:
             request_params = OpenAIChatRequest(

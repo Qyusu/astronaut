@@ -2,14 +2,12 @@ import json
 from enum import Enum
 from typing import Callable, Literal
 
-import numpy as np
 import pandas as pd
 from langsmith import traceable
 from loguru import logger
 from openai.types.shared.reasoning_effort import ReasoningEffort
 from pydantic import BaseModel, Field
 
-import astronaut.constants as exp_const
 from astronaut.llm import ChatClient
 from astronaut.schema import (
     MESSAGE_HISTORY_TYPE,
@@ -17,6 +15,8 @@ from astronaut.schema import (
     ReviewIdeaResult,
     RunContext,
 )
+
+LANGFUSE_TRACKING_TAGS = ["review", "idea"]
 
 
 class ReviewIdea:
@@ -46,7 +46,7 @@ class ReviewIdea:
         self.reasoning_effort = reasoning_effort
         self.verbosity = verbosity
 
-    @traceable(tags=exp_const.LANGSMITH_REVIEW_IDEA_TAGS)
+    @traceable(tags=LANGFUSE_TRACKING_TAGS)
     def review(
         self,
         prompt_builder_fn: Callable[..., tuple[dict[str, str], dict[str, str]]],
@@ -157,18 +157,8 @@ class MetricThresholds(BaseModel):
 
 
 class ReviewMetric(Enum):
-    NONE = (
-        "none",
-        MetricThresholds(
-            significant_improve=(0.0, 0.0),
-            improve=(0.0, 0.0),
-            marginal_improve=(0.0, 0.0),
-            slight_drop=(0.0, 0.0),
-            significant_drop=(0.0, 0.0),
-        ),
-    )
-    AGGREGATED_ACCURACY = (
-        "aggregated_accuracy_validation",
+    ACCURACY = (
+        "accuracy",
         MetricThresholds(
             significant_improve=(0.2, 1.0),
             improve=(0.05, 0.2),
@@ -177,19 +167,29 @@ class ReviewMetric(Enum):
             significant_drop=(-1.0, -0.2),
         ),
     )
+    COST = (
+        "cost",
+        MetricThresholds(
+            significant_improve=(-100.0, -0.1),
+            improve=(-0.1, -0.01),
+            marginal_improve=(-0.01, -1e-10),
+            slight_drop=(1e-10, 0.1),
+            significant_drop=(0.1, 100.0),
+        ),
+    )
     AGGREGATED_COST = (
         "aggregated_cost",
         MetricThresholds(
-            significant_improve=(0.2, 1.0),
-            improve=(0.05, 0.2),
-            marginal_improve=(0.0, 0.05),
-            slight_drop=(-0.2, 0.0),
-            significant_drop=(-np.inf, -0.2),
+            significant_improve=(-100.0, -0.1),
+            improve=(-0.1, -0.01),
+            marginal_improve=(-0.01, -1e-10),
+            slight_drop=(1e-10, 0.1),
+            significant_drop=(0.1, 100.0),
         ),
     )
 
     def __init__(self, value: str, thresholds: MetricThresholds):
-        self._value_ = value  # type: ignore[assignment]
+        self._value_ = value
         self.thresholds = thresholds
 
 
@@ -288,7 +288,7 @@ class ReviewPerformance:
         else:
             self.review_comment_template = review_comment_template
 
-    @traceable(tags=exp_const.LANGSMITH_REVIEW_IDEA_TAGS)
+    @traceable(tags=LANGFUSE_TRACKING_TAGS)
     def review(
         self,
         evaluation_df: pd.DataFrame,
@@ -297,8 +297,11 @@ class ReviewPerformance:
         if len(evaluation_df) < 2:
             return None
 
-        metric_value = self._compute_metric_value(evaluation_df, metric)
-        status = self._get_performance_status(metric_value, metric)
+        diff_metric = (
+            evaluation_df[metric.value].values[-1]
+            - evaluation_df[metric.value].values[-2]
+        )
+        status = self._get_performance_status(diff_metric, metric)
         review_direction = self.review_directions.get(
             status, ReviewDirection(status=status, message="")
         )
@@ -307,31 +310,6 @@ class ReviewPerformance:
             discreatize_performance=status.value,
             review_direction=review_direction.message,
         )
-
-    def _compute_metric_value(
-        self,
-        evaluation_df: pd.DataFrame,
-        metric: ReviewMetric,
-        eps: float = 1e-6,
-    ) -> float:
-        if metric == ReviewMetric.NONE:
-            raise ValueError(
-                "ReviewMetric.NONE is invalid for metric value computation"
-            )
-
-        before = evaluation_df[metric.value].values[-2]
-        after = evaluation_df[metric.value].values[-1]
-
-        if metric == ReviewMetric.AGGREGATED_ACCURACY:
-            # positive value means improvement
-            value = after - before
-            return value
-        elif metric == ReviewMetric.AGGREGATED_COST:
-            # positive value means improvement
-            value = (before - after) / max(before, eps)
-            return value
-        else:
-            raise ValueError(f"Unknown metric: {metric}")
 
     def _get_performance_status(
         self, diff_metric: float, metric: ReviewMetric

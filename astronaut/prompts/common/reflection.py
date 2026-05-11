@@ -115,7 +115,7 @@ class DebateAdvocateIdeaPrompt:
             - **Selective improvement**: Only incorporate feedback that genuinely improves the scientific accuracy, efficiency, or practical applicability of your idea.
             - **Defend valid approaches**: If feedback challenges a scientifically sound aspect of your idea, provide evidence-based justification for maintaining your approach.
             - **Iterative refinement**: Use each round to incrementally improve your idea, building upon previous refinements while addressing new concerns.
-            - **Scientific rigor**: All modifications must be grounded in scientific principles or empirical evidence.
+            - **Scientific rigor**: All modifications must be grounded in quantum chemistry principles, machine learning best practices, or empirical evidence.
             - **Core concept preservation**: While details may evolve, maintain the fundamental innovation and structure of your original idea.
             - **Balanced response**: Acknowledge valid criticisms while confidently defending well-founded aspects of your approach.
 
@@ -139,8 +139,6 @@ class DebateAdvocateIdeaPrompt:
                 - feedback_id: The id of the feedback.
                 - action: The action to take for the feedback (accept or reject).
                 - reason: A detailed explanation of the reason for the action.
-
-            NOTE: For each idea, all fields (e.g., explanation, formula, summary, name) must be written in a complete, self-contained form. Do not describe only the updates or differences introduced in the current round; each idea should be fully specified so that its design is clear and understandable on its own, without requiring references to previous rounds or other entries.
             """
         )
 

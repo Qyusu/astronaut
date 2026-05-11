@@ -28,7 +28,7 @@ class RelatedReferencePrompt:
             - If a method fits multiple ideas, only include it once in the output list.
 
             Example:
-            {{"method_names": ["qml.RX", "qml.SingleExcitation"]}}
+            ["qml.RX", "qml.SingleExcitation"]
             """
         )
 

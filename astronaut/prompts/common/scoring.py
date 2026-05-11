@@ -2,7 +2,7 @@
 
 from textwrap import dedent
 
-import astronaut.constants as exp_const
+from astronaut.constants import NOT_PROVIDED_INFORMATION
 from astronaut.prompts.quantum_kernel.scoring_few_shots import SCORING_FEW_SHOTS
 
 
@@ -42,7 +42,7 @@ class ScoringIdeaPrompt:
                 # Baseline
                 {few_shot_examples}
                 """.format(
-                    not_provided_information=exp_const.NOT_PROVIDED_INFORMATION,
+                    not_provided_information=NOT_PROVIDED_INFORMATION,
                     few_shot_examples=SCORING_FEW_SHOTS,
                 )
                 + score_histories

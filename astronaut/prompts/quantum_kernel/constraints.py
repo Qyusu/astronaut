@@ -1,9 +1,7 @@
 from textwrap import dedent
 
-REFLECTION_EXPERTISE = "quantum computing and machine learning"
-
 FEATURE_MAP_CONSTRAINTS = dedent(
-    """The quantum feature maps (\\Phi(x)) will be used to compute the quantum kernel K(x, x') = |\\langle\\Phi(x)|\\Phi(x')\\rangle|^2 for a QSVM (Quantum Support Vector Machine). Ensure the designs are tailored to this kernel computation.
+    """The quantum feature maps (Φ(x)) will be used to compute the quantum kernel K(x, x') = |⟨Φ(x)|Φ(x')⟩|^2 for a QSVM (Quantum Support Vector Machine). Ensure the designs are tailored to this kernel computation.
     1. **Design Considerations**:
         - Define combinations of quantum gates.
         - Define an entanglement pattern for the features.
@@ -31,19 +29,9 @@ FEATURE_MAP_CONSTRAINTS = dedent(
     """
 )
 
-PERFORMANCE_METRIC_DEFINITION = dedent(
-    """The performance metric is defined as the mean accuracy across multiple datasets.
-
-    The performance metric is given by the following formula:
-        Performance = \\sum_{{i}} Accuracy_i / D
-
-    Where:
-    - D is the number of datasets.
-    - Accuracy_i is the accuracy of the i-th dataset (range: 0.0 to 1.0).
-    """
-)
-
 INPUT_DATA_CONSTRAINTS = dedent(
     """The input data, originally represented as 784-dimensional image data, has been compressed to 80 dimensions using PCA and each value normalized to the range [0.0, 1.0].
     """
 )
+
+REFLECTION_EXPERTISE = "quantum computing and machine learning"

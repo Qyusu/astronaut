@@ -1,12 +1,19 @@
 import os
-from typing import Any, Literal
+from typing import Literal
 
 import yaml
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-import astronaut.constants as exp_const
-from astronaut.logics.common import ReviewMetric
+from astronaut.constants import (
+    DEFAULT_FILTERING_STEPS,
+    DEFAULT_MAX_IDEA_NUM,
+    DEFAULT_MAX_REFLECTION_ROUND,
+    DEFAULT_MAX_SCORING_ROUND,
+    DEFAULT_MAX_SUGGESTION_NUM,
+    DEFAULT_MAX_TRIAL_NUM,
+    MODULE_HOME,
+)
 from astronaut.schema import ReflectionType, ResearchMode
 
 ENV_NONE_PATTERN = ["None", "NONE", "none", ""]
@@ -17,40 +24,31 @@ MODEL_TYPE = Literal["quantum_kernel", "vqe"]
 
 
 class ExperimentSettings(BaseModel):
-    task_type: MODEL_TYPE = Field(
-        description="Specify the task type from 'quantum_kernel' or 'vqe'."
-    )
-
-    dataset_config_path: str | None = Field(
-        default="configs/datasets.yaml",
-        description="Optional path to dataset config yaml file.",
-    )
-    validation_qubits: list[int] = Field(
-        default=[],
-        description="Specify the list of qubit numbers for validation.",
+    model_type: MODEL_TYPE = Field(
+        description="Specify the model type from 'quantum_kernel' or 'vqe'."
     )
     experiment_name: str = Field(
         description="Specify the name of the experiment."
     )
     desc: str = Field(
-        default="Automatically generated quantum circuit.",
+        defalut="Automatically generated quantum circuit.",
         description="Specify the description of the experiment.",
     )
     max_trial_num: int = Field(
-        default=exp_const.DEFAULT_MAX_TRIAL_NUM,
+        default=DEFAULT_MAX_TRIAL_NUM,
         description="Specify the maximum number of trials to run.",
     )
     max_idea_num: int = Field(
-        default=exp_const.DEFAULT_MAX_IDEA_NUM,
+        default=DEFAULT_MAX_IDEA_NUM,
         description="Specify the maximum number of ideas to generate at one trial in the generation component.",
     )
     max_suggestion_num: int = Field(
-        default=exp_const.DEFAULT_MAX_SUGGESTION_NUM,
+        default=DEFAULT_MAX_SUGGESTION_NUM,
         description="Specify the maximum number of suggestions during idea review.",
     )
-    expanding_steps: list[int] = Field(
-        default=exp_const.DEFAULT_EXPANDING_STEPS,
-        description="Specify the number of ideas for each steps of expanding.",
+    filtering_steps: list[int] = Field(
+        default=DEFAULT_FILTERING_STEPS,
+        description="Specify the number of ideas for each steps of filtering.",
     )
     research_mode: ResearchMode = Field(
         default=ResearchMode.NONE,
@@ -65,16 +63,12 @@ class ExperimentSettings(BaseModel):
         description="Specify the type of reflection to use (NONE, SELF, DEBATE).",
     )
     max_reflection_round: int = Field(
-        default=exp_const.DEFAULT_MAX_REFLECTION_ROUND,
+        default=DEFAULT_MAX_REFLECTION_ROUND,
         description="Specify the maximum number of reflection rounds during idea refinement.",
     )
     max_scoring_round: int = Field(
-        default=exp_const.DEFAULT_MAX_SCORING_ROUND,
+        default=DEFAULT_MAX_SCORING_ROUND,
         description="Specify the maximum number of scoring rounds during idea evaluation.",
-    )
-    review_metric: ReviewMetric = Field(
-        default=ReviewMetric.NONE,
-        description="Specify the review metric to cacluate review direction.",
     )
     log_level: LOG_LEVEL = Field(
         default="DEBUG",
@@ -89,13 +83,12 @@ class ExperimentSettings(BaseModel):
     def from_yaml(cls, path: str) -> "ExperimentSettings":
         with open(path, "r") as f:
             data = yaml.safe_load(f) or {}
-
         return cls(**data)
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=f"{exp_const.MODULE_HOME}/.env",
+        env_file=f"{MODULE_HOME}/.env",
         env_file_encoding="utf-8",
     )
 
@@ -108,7 +101,7 @@ class Settings(BaseSettings):
     CHAT_PLATFORM: str = "openai"
     DEFAULT_LIGHT_MODEL_VERSION: str = "gpt-5-mini-2025-08-07"
     DEFAULT_MODEL_VERSION: str = "gpt-5-2025-08-07"
-    EXPANDING_MODEL_VERSION: str = ""
+    FILTERING_MODEL_VERSION: str = ""
     IDEA_MODEL_VERSION: str = ""
     SCORING_MODEL_VERSION: str = ""
     SUMMARY_MODEL_VERSION: str = ""
@@ -116,6 +109,7 @@ class Settings(BaseSettings):
     REFLECTION_MODEL_VERSION: str = ""
     REFERENCE_EXTRACTION_MODEL_VERSION: str = ""
     CODE_MODEL_VERSION: str = ""
+    VALIDATION_MODEL_VERSION: str = ""
     REVIEW_MODEL_VERSION: str = ""
 
     # Embedding setting
@@ -134,10 +128,10 @@ class Settings(BaseSettings):
     LANGCHAIN_API_KEY: str = ""
     LANGCHAIN_PROJECT: str = ""
 
-    def __init__(self, **kwargs: Any) -> None:
+    def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
-        if not self.EXPANDING_MODEL_VERSION:
-            self.EXPANDING_MODEL_VERSION = self.DEFAULT_MODEL_VERSION
+        if not self.FILTERING_MODEL_VERSION:
+            self.FILTERING_MODEL_VERSION = self.DEFAULT_MODEL_VERSION
         if not self.IDEA_MODEL_VERSION:
             self.IDEA_MODEL_VERSION = self.DEFAULT_MODEL_VERSION
         if not self.SCORING_MODEL_VERSION:
@@ -154,6 +148,8 @@ class Settings(BaseSettings):
             )
         if not self.CODE_MODEL_VERSION:
             self.CODE_MODEL_VERSION = self.DEFAULT_MODEL_VERSION
+        if not self.VALIDATION_MODEL_VERSION:
+            self.VALIDATION_MODEL_VERSION = self.DEFAULT_LIGHT_MODEL_VERSION
         if not self.REVIEW_MODEL_VERSION:
             self.REVIEW_MODEL_VERSION = self.DEFAULT_MODEL_VERSION
 

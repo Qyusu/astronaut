@@ -1,16 +1,15 @@
-from __future__ import annotations
 from loguru import logger
-from typing import TYPE_CHECKING
 
-import astronaut.constants as exp_const
-import astronaut.logics.common as common_logics
+from astronaut.constants import COMPLETED
+from astronaut.logics.common import (
+    ReviewIdea,
+    ReviewMetric,
+    ReviewPerformance)
 from astronaut.logics.common.experiments.dependencies import ExperimentDependencies
 from astronaut.logics.common.experiments.runner import BaseExperimentReviewer
 from astronaut.logics.common.experiments.utils import update_run_context
+from astronaut.schema import RunContext
 from astronaut.params import ReviewParams
-
-if TYPE_CHECKING:
-    from astronaut.schema import RunContext
 
 
 class ExperimentReviewer(BaseExperimentReviewer):
@@ -19,34 +18,34 @@ class ExperimentReviewer(BaseExperimentReviewer):
     def __init__(
         self,
         dependencies: ExperimentDependencies,
-        context: "RunContext",
-        review_metric: common_logics.ReviewMetric,
+        context: RunContext,
+        review_metric: ReviewMetric,
     ) -> None:
         self.deps = dependencies
         self.context = context
         self.review_metric = review_metric
-        self.idea_reviewer = common_logics.ReviewIdea(
+        self.idea_reviewer = ReviewIdea(
             client=dependencies.llm_client,
             model_version=context.model_versions.review,
             reasoning_effort=ReviewParams().reasoning_effort,
             verbosity=ReviewParams().verbosity,
         )
-        self.performance_reviewer = common_logics.ReviewPerformance()
+        self.performance_reviewer = ReviewPerformance()
 
     def review_if_needed(
         self, trial_num: int
-    ) -> tuple["RunContext", float, bool]:
+    ) -> tuple[RunContext, float, bool]:
         """Review previous trial results if needed."""
         if not self.context.need_idea_review:
             return self.context, 0.0, False
 
-        if self.review_metric == common_logics.ReviewMetric.NONE:
-            performance_review = None
-        else:
-            performance_review = self.performance_reviewer.review(
-                self.context.eval_result_df,
-                self.review_metric,
-            )
+        # [NOTE]: The ablation study shows that the performance review is not
+        # affected by the result. Then we temporarily disable it.
+        # performance_review = self.performance_reviewer.review(
+        #     self.context.eval_result_df,
+        #     self.review_metric,
+        # )
+        performance_review = None
 
         updated_review_comment, updated_message_history, cost = (
             self.idea_reviewer.review(
@@ -65,7 +64,7 @@ class ExperimentReviewer(BaseExperimentReviewer):
 
         self.context = updated_context  # Update internal context
 
-        is_completed = updated_review_comment == exp_const.COMPLETED
+        is_completed = updated_review_comment == COMPLETED
         if is_completed:
             logger.info("Work is done. The idea generation is completed.")
 

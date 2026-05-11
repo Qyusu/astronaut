@@ -1,134 +1,296 @@
-from typing import Any
-
 import pandas as pd
-import pytest
 
 from astronaut.logics.common.review import (
     PerformanceStatus,
-    ReviewIdea,
     ReviewMetric,
     ReviewPerformance,
 )
-from astronaut.schema import (
-    MessageHistory,
-    MessageHistoryNum,
-    ModelVersions,
-    RunContext,
-)
-
-
-@pytest.fixture
-def mock_client(mocker: Any) -> Any:
-    return mocker.MagicMock()
-
-
-@pytest.fixture
-def review_idea(mock_client: Any) -> ReviewIdea:
-    return ReviewIdea(client=mock_client, model_version="test-model")
-
-
-class TestReviewIdea:
-    def test_review_success(
-        self, review_idea: ReviewIdea, mock_client: Any, mocker: Any
-    ) -> None:
-        # Mock Context
-        context = RunContext(
-            gen_config_dirc="/tmp",
-            gen_code_dirc="/tmp",
-            local_paper_dir="/tmp",
-            model_versions=ModelVersions(
-                default="m",
-                expanding="m",
-                idea="m",
-                scoring="m",
-                summary="m",
-                expert="m",
-                reflection="m",
-                reference="m",
-                code="m",
-                review="m",
-            ),
-            max_trial_num=10,
-            max_idea_num=10,
-            max_suggestion_num=3,
-            max_scoring_round=3,
-            last_code="print(1)",
-            total_cost=0.0,
-            need_idea_review=True,
-            review_comment="",
-            last_trial_results="",
-            score_histories="",
-            message_history=MessageHistory(review=[], idea=[], code=[]),
-            n_message_history=MessageHistoryNum(review=1, idea=1, code=1),
-            eval_result_df=pd.DataFrame(),
-        )
-
-        # Mock LLM response
-        mock_response = mocker.MagicMock()
-        mock_response.content = (
-            '{"keep_points": ["Good point"], "suggestions": ["Try X"]}'
-        )
-        mock_response.message_history = ["rev_msg"]
-        mock_response.cost = 0.03
-        mock_client.parse_chat.return_value = mock_response
-
-        prompt_builder = mocker.MagicMock()
-        prompt_builder.return_value = (
-            {"role": "system", "content": "dev"},
-            {"role": "user", "content": "user"},
-        )
-
-        comment, history, cost = review_idea.review(
-            prompt_builder_fn=prompt_builder, last_trial_num=1, context=context
-        )
-
-        assert "- Good point" in comment
-        assert "- Try X" in comment
-        assert history.review == ["rev_msg"]
-        assert cost == 0.03
 
 
 class TestReviewPerformance:
-    def test_review_too_few_trials(self) -> None:
-        reviewer = ReviewPerformance()
-        df = pd.DataFrame({"aggregated_accuracy_validation": [0.5]})
-        assert reviewer.review(df, ReviewMetric.AGGREGATED_ACCURACY) is None
+    def setup_method(self) -> None:
+        self.significantly_improved_first_sentence = "Please review the changes or factors that likely led to this improvement "  # noqa: E501
+        self.improved_first_sentence = "Please examine the elements that contributed to this progress by referencing all past trials, "  # noqa: E501
+        self.marginally_improved_first_sentence = "Please examine the elements that contributed to this progress by referencing all past trials, "  # noqa: E501
 
-    def test_review_improvement(self) -> None:
-        reviewer = ReviewPerformance()
-        df = pd.DataFrame({"aggregated_accuracy_validation": [0.5, 0.8]})
-        comment = reviewer.review(df, ReviewMetric.AGGREGATED_ACCURACY)
-        assert "Significantly improved" in comment
+        self.unchanged_first_sentence = "Please investigate the potential reasons for this stagnation by comparing all past trials, "  # noqa: E501
 
-    def test_review_drop(self) -> None:
-        reviewer = ReviewPerformance()
-        df = pd.DataFrame({"aggregated_accuracy_validation": [0.8, 0.4]})
-        comment = reviewer.review(df, ReviewMetric.AGGREGATED_ACCURACY)
-        assert "Dropped significantly" in comment
+        self.dropped_slightly_first_sentence = "Please review the factors or changes that may have negatively impacted the results "  # noqa: E501
 
-    def test_review_unchanged(self) -> None:
-        reviewer = ReviewPerformance()
-        df = pd.DataFrame({"aggregated_accuracy_validation": [0.5, 0.5]})
-        comment = reviewer.review(df, ReviewMetric.AGGREGATED_ACCURACY)
-        assert "Unchanged" in comment
+        self.dropped_significantly_first_sentence = "Please thoroughly analyze the root causes of this drop by referencing all past trials, "  # noqa: E501
 
-    def test_review_cost_improvement(self) -> None:
-        reviewer = ReviewPerformance()
-        df = pd.DataFrame({"aggregated_cost": [10.0, 5.0]})
-        comment = reviewer.review(df, ReviewMetric.AGGREGATED_COST)
-        assert "Significantly improved" in comment
-
-    def test_compute_metric_value_invalid(self) -> None:
-        reviewer = ReviewPerformance()
-        df = pd.DataFrame({"col": [1, 2]})
-        with pytest.raises(
-            ValueError, match="invalid for metric value computation"
-        ):
-            reviewer._compute_metric_value(df, ReviewMetric.NONE)
-
-    def test_get_performance_status_out_of_range(self) -> None:
-        reviewer = ReviewPerformance()
-        status = reviewer._get_performance_status(
-            -2.0, ReviewMetric.AGGREGATED_ACCURACY
+        self.out_of_range_first_sentence = (
+            "The performance metric is out of the expected range."
         )
-        assert status == PerformanceStatus.OUT_OF_RANGE
+
+    def test_init(self) -> None:
+        review_performance = ReviewPerformance(
+            review_comment_template="This is test template."
+        )
+        assert (
+            review_performance.review_comment_template
+            == "This is test template."
+        )
+
+        default_review_performance = ReviewPerformance()
+        assert default_review_performance.review_comment_template is not None
+
+    def test_get_performance_status_accuracy(self) -> None:
+        review_performance = ReviewPerformance()
+        metric = ReviewMetric.ACCURACY
+
+        # Test significantly improved range
+        assert (
+            review_performance._get_performance_status(0.21, metric)
+            == PerformanceStatus.SIGNIFICANTLY_IMPROVED
+        )
+        assert (
+            review_performance._get_performance_status(0.5, metric)
+            == PerformanceStatus.SIGNIFICANTLY_IMPROVED
+        )
+        assert (
+            review_performance._get_performance_status(1.0, metric)
+            == PerformanceStatus.SIGNIFICANTLY_IMPROVED
+        )
+
+        # Test improved range
+        assert (
+            review_performance._get_performance_status(0.051, metric)
+            == PerformanceStatus.IMPROVED
+        )
+        assert (
+            review_performance._get_performance_status(0.1, metric)
+            == PerformanceStatus.IMPROVED
+        )
+        assert (
+            review_performance._get_performance_status(0.2, metric)
+            == PerformanceStatus.IMPROVED
+        )
+
+        # Test marginally improved range
+        assert (
+            review_performance._get_performance_status(0.001, metric)
+            == PerformanceStatus.MARGINALLY_IMPROVED
+        )
+        assert (
+            review_performance._get_performance_status(0.025, metric)
+            == PerformanceStatus.MARGINALLY_IMPROVED
+        )
+        assert (
+            review_performance._get_performance_status(0.05, metric)
+            == PerformanceStatus.MARGINALLY_IMPROVED
+        )
+
+        # Test unchanged
+        assert (
+            review_performance._get_performance_status(0.0, metric)
+            == PerformanceStatus.UNCHANGED
+        )
+
+        # Test dropped slightly range
+        assert (
+            review_performance._get_performance_status(-0.1, metric)
+            == PerformanceStatus.DROPPED_SLIGHTLY
+        )
+        assert (
+            review_performance._get_performance_status(-0.15, metric)
+            == PerformanceStatus.DROPPED_SLIGHTLY
+        )
+        assert (
+            review_performance._get_performance_status(-0.2, metric)
+            == PerformanceStatus.DROPPED_SLIGHTLY
+        )
+
+        # Test dropped significantly range
+        assert (
+            review_performance._get_performance_status(-0.21, metric)
+            == PerformanceStatus.DROPPED_SIGNIFICANTLY
+        )
+        assert (
+            review_performance._get_performance_status(-0.5, metric)
+            == PerformanceStatus.DROPPED_SIGNIFICANTLY
+        )
+        assert (
+            review_performance._get_performance_status(-1.0, metric)
+            == PerformanceStatus.DROPPED_SIGNIFICANTLY
+        )
+
+        # Test out of range
+        assert (
+            review_performance._get_performance_status(1.1, metric)
+            == PerformanceStatus.OUT_OF_RANGE
+        )
+        assert (
+            review_performance._get_performance_status(-1.1, metric)
+            == PerformanceStatus.OUT_OF_RANGE
+        )
+
+    def test_get_performance_status_cost(self) -> None:
+        review_performance = ReviewPerformance()
+        metric = ReviewMetric.COST
+
+        # Test significantly improved range
+        assert (
+            review_performance._get_performance_status(-0.1, metric)
+            == PerformanceStatus.SIGNIFICANTLY_IMPROVED
+        )
+        assert (
+            review_performance._get_performance_status(-1.0, metric)
+            == PerformanceStatus.SIGNIFICANTLY_IMPROVED
+        )
+        assert (
+            review_performance._get_performance_status(-99.9, metric)
+            == PerformanceStatus.SIGNIFICANTLY_IMPROVED
+        )
+
+        # Test improved range
+        assert (
+            review_performance._get_performance_status(-0.01, metric)
+            == PerformanceStatus.IMPROVED
+        )
+        assert (
+            review_performance._get_performance_status(-0.05, metric)
+            == PerformanceStatus.IMPROVED
+        )
+        assert (
+            review_performance._get_performance_status(-0.09, metric)
+            == PerformanceStatus.IMPROVED
+        )
+
+        # Test marginally improved range
+        assert (
+            review_performance._get_performance_status(-1e-10, metric)
+            == PerformanceStatus.MARGINALLY_IMPROVED
+        )
+        assert (
+            review_performance._get_performance_status(-0.005, metric)
+            == PerformanceStatus.MARGINALLY_IMPROVED
+        )
+        assert (
+            review_performance._get_performance_status(-0.009, metric)
+            == PerformanceStatus.MARGINALLY_IMPROVED
+        )
+
+        # Test unchanged
+        assert (
+            review_performance._get_performance_status(0.0, metric)
+            == PerformanceStatus.UNCHANGED
+        )
+
+        # Test dropped slightly range
+        assert (
+            review_performance._get_performance_status(1e-10, metric)
+            == PerformanceStatus.DROPPED_SLIGHTLY
+        )
+        assert (
+            review_performance._get_performance_status(0.05, metric)
+            == PerformanceStatus.DROPPED_SLIGHTLY
+        )
+        assert (
+            review_performance._get_performance_status(0.09, metric)
+            == PerformanceStatus.DROPPED_SLIGHTLY
+        )
+
+        # Test dropped significantly range
+        assert (
+            review_performance._get_performance_status(0.1, metric)
+            == PerformanceStatus.DROPPED_SIGNIFICANTLY
+        )
+        assert (
+            review_performance._get_performance_status(10.0, metric)
+            == PerformanceStatus.DROPPED_SIGNIFICANTLY
+        )
+        assert (
+            review_performance._get_performance_status(99.9, metric)
+            == PerformanceStatus.DROPPED_SIGNIFICANTLY
+        )
+
+        # Test out of range
+        assert (
+            review_performance._get_performance_status(-100.1, metric)
+            == PerformanceStatus.OUT_OF_RANGE
+        )
+        assert (
+            review_performance._get_performance_status(100.0, metric)
+            == PerformanceStatus.OUT_OF_RANGE
+        )
+
+    def test_review(self) -> None:
+        review_performance = ReviewPerformance()
+
+        # case1: data length is not enough to review
+        evaluation_df = pd.DataFrame({"accuracy": [0.1]})
+        assert (
+            review_performance.review(evaluation_df, ReviewMetric.ACCURACY)
+            is None
+        )
+
+        # case2: data length is enough to review and metrics are "Significantly improved"
+        evaluation_df = pd.DataFrame({"accuracy": [0.1, 0.5]})
+        review_comment = review_performance.review(
+            evaluation_df, ReviewMetric.ACCURACY
+        )
+        assert review_comment is not None and (
+            self.significantly_improved_first_sentence in review_comment
+        )
+
+        # case3: data length is enough to review and metrics are "Improved"
+        evaluation_df = pd.DataFrame({"accuracy": [0.2, 0.26]})
+        review_comment = review_performance.review(
+            evaluation_df, ReviewMetric.ACCURACY
+        )
+        assert review_comment is not None and (
+            self.improved_first_sentence in review_comment
+        )
+
+        # case4: data length is enough to review and metrics are "Marginally improved"
+        evaluation_df = pd.DataFrame({"accuracy": [0.2, 0.21]})
+        review_comment = review_performance.review(
+            evaluation_df, ReviewMetric.ACCURACY
+        )
+        assert review_comment is not None and (
+            self.marginally_improved_first_sentence in review_comment
+        )
+
+        # case5: data length is enough to review and metrics are "Unchanged"
+        evaluation_df = pd.DataFrame({"accuracy": [0.2, 0.2]})
+        review_comment = review_performance.review(
+            evaluation_df, ReviewMetric.ACCURACY
+        )
+        assert review_comment is not None and (
+            self.unchanged_first_sentence in review_comment
+        )
+
+        # case6: data length is enough to review and metrics are "Dropped slightly"
+        evaluation_df = pd.DataFrame({"accuracy": [0.2, 0.15]})
+        review_comment = review_performance.review(
+            evaluation_df, ReviewMetric.ACCURACY
+        )
+        assert review_comment is not None and (
+            self.dropped_slightly_first_sentence in review_comment
+        )
+
+        # case7: data length is enough to review and metrics are "Dropped significantly"
+        evaluation_df = pd.DataFrame({"accuracy": [0.5, 0.1]})
+        review_comment = review_performance.review(
+            evaluation_df, ReviewMetric.ACCURACY
+        )
+        assert review_comment is not None and (
+            self.dropped_significantly_first_sentence in review_comment
+        )
+
+        # case8: data length is enough to review and metrics are "Out of Range"
+        evaluation_df = pd.DataFrame({"accuracy": [0.5, 100.0]})
+        review_comment = review_performance.review(
+            evaluation_df, ReviewMetric.ACCURACY
+        )
+        assert review_comment is not None and (
+            self.out_of_range_first_sentence in review_comment
+        )
+
+    def test_review_with_empty_df(self) -> None:
+        review_performance = ReviewPerformance()
+        assert (
+            review_performance.review(pd.DataFrame(), ReviewMetric.ACCURACY)
+            is None
+        )

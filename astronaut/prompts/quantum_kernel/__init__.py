@@ -3,8 +3,8 @@ from astronaut.prompts.quantum_kernel.constraints import (
     REFLECTION_EXPERTISE,
 )
 from astronaut.prompts.quantum_kernel.generator import (
-    ExpandingFeatureMapIdeaPrompt,
     FeedbackBasedFeatureMapIdeaPrompt,
+    FilteringFeatureMapIdeaPrompt,
     GenerateFeatureMapCodePrompt,
     ResearchBasedFeatureMapIdeaPrompt,
 )
@@ -15,7 +15,7 @@ __all__ = [
     "FEATURE_MAP_CONSTRAINTS",
     "REFLECTION_EXPERTISE",
     "FeedbackBasedFeatureMapIdeaPrompt",
-    "ExpandingFeatureMapIdeaPrompt",
+    "FilteringFeatureMapIdeaPrompt",
     "GenerateFeatureMapCodePrompt",
     "ResearchBasedFeatureMapIdeaPrompt",
     "RESEARCHER_USER_PROMPT",

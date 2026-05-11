@@ -1,38 +1,32 @@
-from __future__ import annotations
+from typing import Any, cast
 
-from typing import TYPE_CHECKING, Any
+from loguru import logger
+from qxmt.experiment import Experiment
+from qxmt.experiment.schema import VQEEvaluations
 
-from astronaut.logics.common import ReviewMetric
+from astronaut.db import PineconeClient
+from astronaut.llm import ChatClient
 from astronaut.logics.strategies import QuantumStrategy
-from astronaut.logics.vqe.run_experiment import run, run_baseline
-
-if TYPE_CHECKING:
-    from qxmt.experiment import Experiment
-
-    from astronaut.db import PineconeClient
-    from astronaut.llm import ChatClient
-    from astronaut.schema import ReflectionType, ResearchMode
+from astronaut.logics.vqe import run
+from astronaut.schema import ReflectionType, ResearchMode
 
 
 class VQEStrategy(QuantumStrategy):
     def __init__(
         self,
-        llm_client: "ChatClient",
-        arxiv_db_client: "PineconeClient" | None,
-        qml_db_client: "PineconeClient" | None,
+        llm_client: ChatClient,
+        arxiv_db_client: PineconeClient | None,
+        qml_db_client: PineconeClient | None,
         seed_code: str,
-        experiment: "Experiment",
-        dataset_configs: dict[str, Any],
-        validation_qubits: list[int],
+        experiment: Experiment,
         max_trial_num: int,
         max_idea_num: int,
         max_suggestion_num: int,
-        expanding_steps: list[int],
-        research_mode: "ResearchMode",
-        reflection_type: "ReflectionType",
+        filtering_steps: list[int],
+        research_mode: ResearchMode,
+        reflection_type: ReflectionType,
         max_reflection_round: int,
         max_scoring_round: int,
-        review_metric: ReviewMetric = ReviewMetric.NONE,
         existing_research_report_path: str | None = None,
     ):
         self.llm_client = llm_client
@@ -40,43 +34,43 @@ class VQEStrategy(QuantumStrategy):
         self.qml_db_client = qml_db_client
         self.seed_code = seed_code
         self.experiment = experiment
-        self.dataset_configs = dataset_configs
-        self.validation_qubits = validation_qubits
         self.max_trial_num = max_trial_num
         self.max_idea_num = max_idea_num
         self.max_suggestion_num = max_suggestion_num
-        self.expanding_steps = expanding_steps
+        self.filtering_steps = filtering_steps
         self.research_mode = research_mode
         self.reflection_type = reflection_type
         self.max_reflection_round = max_reflection_round
         self.max_scoring_round = max_scoring_round
-        self.review_metric = review_metric
         self.existing_research_report_path = existing_research_report_path
 
-    def execute_baseline(self, *args: Any, **kwargs: Any) -> None:
-        return run_baseline(
-            experiment=self.experiment,
-            dataset_configs=self.dataset_configs,
+    def execute_baseline(self, config_source: str) -> None:
+        logger.info("Run Experiment by QXMT with Seed Ansatz...")
+        _, baseline_result = self.experiment.run(
+            config_source=config_source, add_results=False
+        )
+        baseline_evaluations = cast(VQEEvaluations, baseline_result.evaluations)
+        logger.info(
+            f"""
+            Base Score: {baseline_evaluations}
+            """
         )
 
     def execute_experiment(self, *args: Any, **kwargs: Any) -> None:
         return run(
-            llm_client=self.llm_client,
-            arxiv_db_client=self.arxiv_db_client,
-            qml_db_client=self.qml_db_client,
-            seed_code=self.seed_code,
-            experiment=self.experiment,
-            dataset_configs=self.dataset_configs,
-            validation_qubits=self.validation_qubits,
-            max_trial_num=self.max_trial_num,
-            max_idea_num=self.max_idea_num,
-            max_suggestion_num=self.max_suggestion_num,
-            expanding_steps=self.expanding_steps,
-            research_mode=self.research_mode,
-            reflection_type=self.reflection_type,
-            max_reflection_round=self.max_reflection_round,
-            max_scoring_round=self.max_scoring_round,
-            review_metric=self.review_metric,
+            self.llm_client,
+            self.arxiv_db_client,
+            self.qml_db_client,
+            self.seed_code,
+            self.experiment,
+            self.max_trial_num,
+            self.max_idea_num,
+            self.max_suggestion_num,
+            self.filtering_steps,
+            self.research_mode,
+            self.reflection_type,
+            self.max_reflection_round,
+            self.max_scoring_round,
             existing_research_report_path=self.existing_research_report_path,
         )
 

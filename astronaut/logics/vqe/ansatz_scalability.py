@@ -1,6 +1,6 @@
 import importlib
 from collections import Counter
-from typing import Callable, Iterable, cast
+from typing import Callable, Iterable
 
 import numpy as np
 import pennylane as qml
@@ -60,7 +60,7 @@ class CircuitAnalyzer:
     @staticmethod
     def tape_in_basis(
         qnode: qml.QNode,
-        init_params: np.ndarray,
+        init_params,
         base_ops: Iterable[str] = ("RX", "RY", "RZ", "CNOT"),
         max_passes: int = 20,
     ) -> qml.tape.QuantumScript:
@@ -69,7 +69,7 @@ class CircuitAnalyzer:
 
         base_ops = set(base_ops)
 
-        def stop_at(op: qml.operation.Operation) -> bool:
+        def stop_at(op):
             from pennylane.measurements import MeasurementProcess
 
             return (
@@ -95,7 +95,7 @@ class CircuitAnalyzer:
         """Get circuit specifications including depth, gates count, and histogram."""
         try:
 
-            def _circuit(params: np.ndarray) -> float:
+            def _circuit(params):
                 ansatz.circuit(params)
                 return qml.expval(qml.PauliZ(0))
 
@@ -150,7 +150,7 @@ class ModelFitter:
         try:
             popt, _ = curve_fit(model, num_qubits, targets, p0=p0, maxfev=5000)
             residuals = targets - model(num_qubits, *popt)
-            rss = float(np.sum(residuals**2))
+            rss = np.sum(residuals**2)
             return rss, popt
         except RuntimeError as e:
             logger.warning(f"Failed to fit model: {e}")
@@ -178,37 +178,37 @@ class ScalabilityAnalyzer:
             )
             return "unknown"
 
-        num_qubits_arr = np.array(num_qubits)
-        targets_arr = np.array(targets)
+        num_qubits = np.array(num_qubits)
+        targets = np.array(targets)
 
         try:
             # Fit different models
             rss_const, popt_const = self.model_fitter.fit_and_error(
                 self.model_fitter.const_model,
-                p0=(float(np.median(targets_arr)),),
-                num_qubits=num_qubits_arr,
-                targets=targets_arr,
+                p0=(float(np.median(targets)),),
+                num_qubits=num_qubits,
+                targets=targets,
             )
 
             rss_poly, popt_poly = self.model_fitter.fit_and_error(
                 self.model_fitter.poly_model,
                 p0=(1, 1),
-                num_qubits=num_qubits_arr,
-                targets=targets_arr,
+                num_qubits=num_qubits,
+                targets=targets,
             )
 
             rss_exp, popt_exp = self.model_fitter.fit_and_error(
                 self.model_fitter.exp_model,
                 p0=(1, 0.1),
-                num_qubits=num_qubits_arr,
-                targets=targets_arr,
+                num_qubits=num_qubits,
+                targets=targets,
             )
 
             rss_log, popt_log = self.model_fitter.fit_and_error(
                 self.model_fitter.log_model,
                 p0=(1, 1),
-                num_qubits=num_qubits_arr,
-                targets=targets_arr,
+                num_qubits=num_qubits,
+                targets=targets,
             )
 
             # Select the model with the smallest RSS
@@ -323,9 +323,9 @@ class AnsatzScalabilityDetector:
             logger.warning("Ansatz class not loaded, returning empty lists")
             return [], [], []
 
-        qubits_list: list[int] = []
-        params_list: list[int] = []
-        gates_list: list[int] = []
+        qubits_list = []
+        params_list = []
+        gates_list = []
 
         for n_qubits in range(min_qubits, max_qubits, step):
             try:
@@ -345,7 +345,7 @@ class AnsatzScalabilityDetector:
                     ansatz,
                     BASE_OPERATIONS,
                 )
-                n_gates = cast(int, circuit_spec["total_gates"])
+                n_gates = circuit_spec["total_gates"]
 
                 qubits_list.append(n_qubits)
                 params_list.append(n_params)
@@ -367,23 +367,23 @@ class DummyHamiltonian:
         n_occ_spatial = max(1, min(self.n_orbitals - 1, self.n_orbitals // 2))
         self.n_electrons = 2 * n_occ_spatial
 
-    def get_n_qubits(self) -> int:
+    def get_n_qubits(self):
         return self.n_qubits
 
-    def get_electrons(self) -> int:
+    def get_electrons(self):
         return self.n_electrons
 
-    def get_molecular_orbitals(self) -> int:
+    def get_molecular_orbitals(self):
         return self.n_orbitals
 
-    def get_spin_orbitals(self) -> int:
+    def get_spin_orbitals(self):
         return self.n_qubits
 
-    def get_active_electrons(self) -> int:
+    def get_active_electrons(self):
         return self.n_electrons
 
-    def get_active_orbitals(self) -> int:
+    def get_active_orbitals(self):
         return self.n_orbitals
 
-    def get_active_spin_orbitals(self) -> int:
+    def get_active_spin_orbitals(self):
         return self.n_qubits

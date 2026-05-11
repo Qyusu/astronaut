@@ -5,7 +5,6 @@ from textwrap import dedent
 from astronaut.prompts.quantum_kernel.constraints import (
     FEATURE_MAP_CONSTRAINTS,
     INPUT_DATA_CONSTRAINTS,
-    PERFORMANCE_METRIC_DEFINITION,
 )
 
 
@@ -13,12 +12,10 @@ class ReviewIdeaPrompt:
     def __init__(
         self,
         feature_map_constraints: str = FEATURE_MAP_CONSTRAINTS.strip(),
-        performance_metric_definition: str = PERFORMANCE_METRIC_DEFINITION.strip(),
         input_data_constraints: str = INPUT_DATA_CONSTRAINTS.strip(),
         max_suggestion_num: int = 3,
     ) -> None:
         self.feature_map_constraints = feature_map_constraints
-        self.performance_metric_definition = performance_metric_definition
         self.input_data_constraints = input_data_constraints
         self.max_suggestion_num = max_suggestion_num
 
@@ -29,7 +26,7 @@ class ReviewIdeaPrompt:
 
 
             # Task
-            Your task is to review past ideas on quantum feature maps and their evaluation results, and propose improvements to enhance performance metric through continuous refinement. Restrict your review to the quantum feature map design itself; do not propose changes to the overall model, evaluation metrics, or other workflows.
+            Your task is to review past ideas on quantum feature maps and their evaluation results, and propose improvements to enhance accuracy through continuous refinement. Restrict your review to the quantum feature map design itself; do not propose changes to the overall model, evaluation metrics, or other workflows.
 
             Encourage innovative approaches that go beyond simple combinations of established methods when suggesting improvements.
 
@@ -37,8 +34,6 @@ class ReviewIdeaPrompt:
             # Feature Map Constraints
             {feature_map_constraints}
 
-            # Performance Metric Definition
-            {performance_metric_definition}
 
             # Input Data Constraints
             {input_data_constraints}
@@ -46,9 +41,9 @@ class ReviewIdeaPrompt:
 
             # Output Format
             1. Keep Points:
-                - Identify factors that contributed to improved performance metric.
+                - Identify factors that contributed to improved accuracy.
                 - Analyze the most accurate idea in detail.
-                - Review multiple ideas to identify common elements that contributed to improving performance metric.
+                - Review multiple ideas to identify common elements that contributed to improving accuracy.
             2. Suggestions:
                 - Limit the number of suggestions to {max_suggestion_num} or fewer.
                 - Ensure each suggestion includes only a single proposal.
@@ -59,6 +54,10 @@ class ReviewIdeaPrompt:
                 "keep_points": ["point 1", "point 2", ..., "point n"],
                 "suggestions": ["suggestion 1", "suggestion 2", ..., "suggestion n"]
                 }}
+
+
+            # Notes
+            - Evaluation Metric: Classification accuracy is the primary metric. The goal is to achieve the highest possible accuracy.
             """
         )
 
@@ -72,7 +71,7 @@ class ReviewIdeaPrompt:
             """
             The previous idea and experimental results are provided below in the "# Previous Trial Idea and Results" section. These reflect iterative adjustments based on past trial review comments.
 
-            Review the trial results to design a quantum feature map for a more accurate QSVM. Identify the factors that contributed to performance improvement and areas for further enhancement. Finally, check whether the review results comply with the design rules for the quantum feature map.
+            Review the trial results to design a quantum feature map for a more accurate QSVM. Identify the factors that contributed to accuracy improvement and areas for further enhancement. Finally, check whether the review results comply with the design rules for the quantum feature map.
 
             # Previous Trial Idea and Results (Trial Number: {last_trial_num})
             {last_trial_results}
@@ -98,7 +97,6 @@ class ReviewIdeaPrompt:
     ) -> tuple[dict[str, str], dict[str, str]]:
         developer_content = self.developer_template.format(
             feature_map_constraints=self.feature_map_constraints,
-            performance_metric_definition=self.performance_metric_definition,
             input_data_constraints=self.input_data_constraints,
             max_suggestion_num=self.max_suggestion_num,
         )

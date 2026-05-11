@@ -3,8 +3,8 @@ from astronaut.prompts.vqe.constraints import (
     REFLECTION_EXPERTISE,
 )
 from astronaut.prompts.vqe.generator import (
-    ExpandingAnsatzIdeaPrompt,
     FeedbackBasedAnsatzIdeaPrompt,
+    FilteringAnsatzIdeaPrompt,
     GenerateAnsatzCodePrompt,
     ResearchBasedAnsatzIdeaPrompt,
 )
@@ -15,7 +15,7 @@ __all__ = [
     "ANSATZ_CONSTRAINTS",
     "REFLECTION_EXPERTISE",
     "FeedbackBasedAnsatzIdeaPrompt",
-    "ExpandingAnsatzIdeaPrompt",
+    "FilteringAnsatzIdeaPrompt",
     "GenerateAnsatzCodePrompt",
     "ResearchBasedAnsatzIdeaPrompt",
     "ReviewIdeaPrompt",

@@ -6,7 +6,7 @@ from pydantic import BaseModel
 
 class CodeValidationParams(BaseModel):
     reasoning_effort: ReasoningEffort | None = "minimal"
-    verbosity: Literal["low", "medium", "high"] | None = "medium"
+    verbosity: Literal["low", "medium", "high"] | None = "low"
 
 
 class ExpertParams(BaseModel):
@@ -15,12 +15,12 @@ class ExpertParams(BaseModel):
 
 
 class GenerateCodeParams(BaseModel):
-    reasoning_effort: ReasoningEffort | None = "xhigh"
-    verbosity: Literal["low", "medium", "high"] | None = "medium"
+    reasoning_effort: ReasoningEffort | None = "high"
+    verbosity: Literal["low", "medium", "high"] | None = "low"
 
 
 class GenerateIdeaParams(BaseModel):
-    reasoning_effort: ReasoningEffort | None = "xhigh"
+    reasoning_effort: ReasoningEffort | None = "high"
     verbosity: Literal["low", "medium", "high"] | None = "high"
 
 
@@ -35,12 +35,12 @@ class PennyLaneReferenceParams(BaseModel):
 
 
 class ReflectionParams(BaseModel):
-    reasoning_effort: ReasoningEffort | None = "xhigh"
+    reasoning_effort: ReasoningEffort | None = "high"
     verbosity: Literal["low", "medium", "high"] | None = "high"
 
 
 class ReviewParams(BaseModel):
-    reasoning_effort: ReasoningEffort | None = "xhigh"
+    reasoning_effort: ReasoningEffort | None = "high"
     verbosity: Literal["low", "medium", "high"] | None = "high"
 
 

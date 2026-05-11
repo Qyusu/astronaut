@@ -1,13 +1,15 @@
 import json
 from abc import ABC, abstractmethod
-from typing import Any, Callable, Literal, TypeVar
+from typing import Callable, Literal, TypeVar
 
 from langsmith import traceable
 from loguru import logger
 from openai.types.shared.reasoning_effort import ReasoningEffort
 from pydantic import BaseModel
 
-import astronaut.constants as exp_const
+from astronaut.constants import (
+    NOT_PROVIDED_INFORMATION,
+)
 from astronaut.db import PineconeClient
 from astronaut.llm import ChatClient
 from astronaut.logics.common.expert import PaperExpert
@@ -57,7 +59,7 @@ class ReflectionStrategy(ABC):
             ..., tuple[dict[str, str], dict[str, str]]
         ]
         | None = None,
-        **kwargs: Any,
+        **kwargs,
     ) -> tuple[GeneratedIdea, float]:
         """Perform reflection based on the strategy."""
         pass
@@ -79,7 +81,7 @@ class NoReflectionStrategy(ReflectionStrategy):
             ..., tuple[dict[str, str], dict[str, str]]
         ]
         | None = None,
-        **kwargs: Any,
+        **kwargs,
     ) -> tuple[GeneratedIdea, float]:
         return seed_idea, 0.0
 
@@ -100,7 +102,7 @@ class SelfReflectionStrategy(ReflectionStrategy):
             ..., tuple[dict[str, str], dict[str, str]]
         ]
         | None = None,
-        **kwargs: Any,
+        **kwargs,
     ) -> tuple[GeneratedIdea, float]:
         return self.reflector.reflect_multi_round(
             prompt_builder_fn=prompt_builder_fn,
@@ -139,7 +141,7 @@ class DebateReflectionStrategy(ReflectionStrategy):
             ..., tuple[dict[str, str], dict[str, str]]
         ]
         | None = None,
-        **kwargs: Any,
+        **kwargs,
     ) -> tuple[GeneratedIdea, float]:
         if critic_prompt_builder_fn is None:
             raise ValueError(
@@ -214,7 +216,7 @@ class ReflectIdea:
         self.reasoning_effort = reasoning_effort
         self.verbosity = verbosity
 
-    @traceable(tags=exp_const.LANGSMITH_SELF_REFLECTION_IDEA_TAGS)
+    @traceable(tags=["self-reflection", "idea"])
     def reflect_multi_round(
         self,
         prompt_builder_fn: Callable[..., tuple[dict[str, str], dict[str, str]]],
@@ -238,7 +240,7 @@ class ReflectIdea:
         total_cost = 0.0
         final_idea = seed_idea
         final_score = seed_score
-        reflection_message_history: MESSAGE_HISTORY_TYPE = []
+        reflection_message_history = []
 
         for i in range(1, max_reflection_round + 1):
             logger.info(
@@ -279,7 +281,7 @@ class ReflectIdea:
 
         return final_idea, total_cost
 
-    @traceable(tags=exp_const.LANGSMITH_DEBATE_REFLECTION_IDEA_TAGS)
+    @traceable(tags=["debate-reflection", "idea"])
     def reflect_debate(
         self,
         advocate_prompt_builder_fn: Callable[
@@ -311,8 +313,8 @@ class ReflectIdea:
         advocate_response = (
             "This is the first round then no advocate response is provided."
         )
-        advocate_history: MESSAGE_HISTORY_TYPE = []
-        critic_history: MESSAGE_HISTORY_TYPE = []
+        advocate_history = []
+        critic_history = []
 
         for current_reflection_round in range(1, max_reflection_round + 1):
             logger.info(
@@ -354,7 +356,7 @@ class ReflectIdea:
 
         return refined_idea, total_cost
 
-    @traceable(tags=exp_const.LANGSMITH_CRITIC_IDEA_TAGS)
+    @traceable(tags=["critic", "idea"])
     def _critic(
         self,
         critic_prompt_builder_fn: Callable[
@@ -403,9 +405,6 @@ class ReflectIdea:
         )
         total_cost += related_works_cost
         additional_information_query = None
-        critic_result: DebateCriticIdeaResult | None = (
-            DebateCriticIdeaResult.create_error_fallback()
-        )
 
         for _ in range(max_critic_round):
             critic_system, critic_user = critic_prompt_builder_fn(
@@ -447,9 +446,6 @@ class ReflectIdea:
             else:
                 break
 
-        if critic_result is None:
-            critic_result = DebateCriticIdeaResult.create_error_fallback()
-
         critical_feedback = "--------------\n".join(
             [str(feedback) for feedback in critic_result.feedback]
         )
@@ -461,7 +457,7 @@ class ReflectIdea:
             critic_result.is_completed,
         )
 
-    @traceable(tags=exp_const.LANGSMITH_ADVOCATE_IDEA_TAGS)
+    @traceable(tags=["advocate", "idea"])
     def _advocate(
         self,
         advocate_prompt_builder_fn: Callable[
@@ -571,7 +567,7 @@ class ReflectIdea:
             )
             return "\n--------------".join(papers), summary_cost
         else:
-            return exp_const.NOT_PROVIDED_INFORMATION, 0.0
+            return NOT_PROVIDED_INFORMATION, 0.0
 
     def reflect_with_strategy(
         self,
@@ -584,7 +580,7 @@ class ReflectIdea:
             ..., tuple[dict[str, str], dict[str, str]]
         ]
         | None = None,
-        **kwargs: Any,
+        **kwargs,
     ) -> tuple[GeneratedIdea, float]:
         """Reflect an idea using the provided strategy.
 

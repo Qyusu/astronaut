@@ -15,7 +15,14 @@ from langsmith import traceable
 from loguru import logger
 from pydantic import BaseModel, Field
 
-import astronaut.constants as exp_const
+from astronaut.constants import (
+    DEFAULT_MAX_RETRY,
+    GENERATED_CODE_DIRC,
+    GENERATED_MODULE_ROOT,
+    PENNYLANE_REFERENCE_PATH,
+    QKERNEL_MODEL_TYPE,
+    VQE_MODEL_TYPE,
+)
 from astronaut.db import PineconeClient
 from astronaut.llm import ChatClient
 from astronaut.logics.common.code_utils import save_generated_code
@@ -59,7 +66,8 @@ class ValidationResult(BaseModel):
 
     def merge(self, other: "ValidationResult") -> None:
         """Merge another validation result."""
-        self.is_valid = self.is_valid and other.is_valid
+        if not other.is_valid:
+            self.is_valid = False
         self.errors.extend(other.errors)
         self.cost += other.cost
 
@@ -67,7 +75,7 @@ class ValidationResult(BaseModel):
 class SyntaxValidator:
     """Validates code syntax using py_compile and ast."""
 
-    @traceable(tags=exp_const.LANGSMITH_VALIDATION_SYNTAX_TAGS)
+    @traceable(tags=["validation", "syntax"])
     def validate_by_py_compile(self, source_code: str) -> ValidationResult:
         """Validate code syntax using py_compile with safe temporary file handling."""
         try:
@@ -91,7 +99,7 @@ class SyntaxValidator:
             logger.warning(error_message)
             return ValidationResult(is_valid=False, errors=[error_message])
 
-    @traceable(tags=exp_const.LANGSMITH_VALIDATION_SYNTAX_TAGS)
+    @traceable(tags=["validation", "syntax"])
     def validate_by_ast(self, source_code: str) -> ValidationResult:
         """Validate code syntax using ast."""
         try:
@@ -126,7 +134,7 @@ class PennyLaneDocValidator:
     def validate(
         self,
         source_code: str,
-        method_prefixes: list[str] = exp_const.PENNYLANE_METHOD_PREFIXES,
+        method_prefixes: list[str] = ["qml", "qml.qchem"],
     ) -> ValidationResult:
         reference = self._get_pennylane_reference()
         methods = self._extract_pennylane_functions(
@@ -263,13 +271,13 @@ class PennyLaneDocValidator:
         expected_args: list[dict[str, str]],
         method_prefixes: list[str],
     ) -> list[str]:
-        errors: list[str] = []
+        errors = []
         expected_args_names = [arg["name"] for arg in expected_args]
         required_args = [arg for arg in expected_args if bool(arg["required"])]
 
         tree = ast.parse(method)
         expr = getattr(tree.body[0], "value", None)
-        if expr is None or not isinstance(expr, ast.Call):
+        if not isinstance(expr, ast.Call):
             return errors
 
         target = self._dotted_name(expr.func)
@@ -325,7 +333,7 @@ class CodeValidator:
         # Initialize validators
         self.syntax_validator = SyntaxValidator()
         self.doc_validator = PennyLaneDocValidator(
-            reference_path=exp_const.PENNYLANE_REFERENCE_PATH
+            reference_path=PENNYLANE_REFERENCE_PATH
         )
 
     def validate_all(self) -> tuple[bool, list[str], float]:
@@ -360,22 +368,42 @@ def is_same_code(last_code: str, code: str) -> bool:
     return last_code == code
 
 
-@traceable(tags=exp_const.LANGSMITH_VALIDATION_CODE_TAGS)
+@traceable(tags=["validation", "code"])
 def dry_run(
+    model_type: str,
     experiment: qxmt.Experiment,
-    config: dict,
     config_path: str,
+    generate_result: GeneratedResult,
 ) -> tuple[str, list[str]]:
     """Dry run the generated code by QXMT experiment.
 
     Args:
+        model_type (str): model type
         experiment (qxmt.Experiment): qxmt experiment instance
-        config (dict): config for dry run
-        config_path (str): path to config file for dry run (used for temp file location)
+        config_path (str): path to config file for dry run
+        generate_result (GeneratedResult): generated result by LLM
 
     Returns:
         str: error message if code execution is failed
     """
+    config = yaml.safe_load(open(config_path))
+    if model_type == QKERNEL_MODEL_TYPE:
+        config["feature_map"]["module_name"] = (
+            f"{GENERATED_MODULE_ROOT}.{experiment.name}.dry_run"
+        )
+        config["feature_map"]["implement_name"] = (
+            generate_result.implement.class_name
+        )
+    elif model_type == VQE_MODEL_TYPE:
+        config["ansatz"]["module_name"] = (
+            f"{GENERATED_MODULE_ROOT}.{experiment.name}.dry_run"
+        )
+        config["ansatz"]["implement_name"] = (
+            generate_result.implement.class_name
+        )
+    else:
+        raise ValueError(f"Invalid model type: {model_type}")
+
     # save config in tmp file
     tmp_config_path = f"{config_path}".replace(".yaml", "_tmp.yaml")
     with open(tmp_config_path, "w") as file:
@@ -386,6 +414,7 @@ def dry_run(
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("default")
         try:
+            logger.info("Execute dry run ...")
             experiment.run(config_source=tmp_config_path, add_results=False)
             os.remove(tmp_config_path)
             logger.info("dry run: Code execution is successful.")
@@ -470,7 +499,7 @@ class CodeValidationOrchestrator:
         context: RunContext,
         experiment: qxmt.Experiment,
         dry_run_config_path: str,
-        max_retry: int = exp_const.DEFAULT_MAX_RETRY,
+        max_retry: int = DEFAULT_MAX_RETRY,
     ) -> None:
         self.llm_client = llm_client
         self.db_client = db_client
@@ -486,9 +515,8 @@ class CodeValidationOrchestrator:
             verbosity=CodeValidationParams().verbosity,
         )
 
-    @traceable(tags=exp_const.LANGSMITH_VALIDATION_CODE_TAGS)
     def validate_and_retry(
-        self, generate_result: GeneratedResult, config_list: list[dict]
+        self, generate_result: GeneratedResult
     ) -> tuple[GeneratedResult, float]:
         """Main orchestration method for code validation and regeneration.
 
@@ -500,7 +528,6 @@ class CodeValidationOrchestrator:
 
         Args:
             generate_result (GeneratedResult): Generated code result to validate
-            config_list (list[dict]): List of dry run configs
 
         Returns:
             tuple[GeneratedResult, float]: Validated code result and total validation cost
@@ -523,7 +550,7 @@ class CodeValidationOrchestrator:
 
         # Phase 3: Dry run with retry
         final_result, dry_run_cost = self._perform_dry_run_with_retry(
-            validated_result, config_list
+            validated_result
         )
         validation_cost += dry_run_cost
 
@@ -596,15 +623,6 @@ class CodeValidationOrchestrator:
             is_valid=is_valid, errors=error_messages, cost=cost
         )
 
-    def _get_regenerate_tools(self) -> list[dict[str, str]] | None:
-        if "codex" in self.code_generator.model_version:
-            return None
-        else:
-            return [
-                {"type": "web_search_preview"},
-                {"type": "code_interpreter", "container": {"type": "auto"}},  # type: ignore
-            ]
-
     def _regenerate_code(
         self,
         code: str,
@@ -634,7 +652,10 @@ class CodeValidationOrchestrator:
             user_prompt=user_prompt,
             message_history=message_history,
             n_history=None,
-            tools=self._get_regenerate_tools(),
+            tools=[
+                {"type": "web_search_preview"},
+                {"type": "code_interpreter", "container": {"type": "auto"}},
+            ],
         )
 
     def _is_same_as_previous_code(
@@ -654,13 +675,12 @@ class CodeValidationOrchestrator:
         )
 
     def _perform_dry_run_with_retry(
-        self, validate_result: GeneratedResult, config_list: list[dict]
+        self, validate_result: GeneratedResult
     ) -> tuple[GeneratedResult, float]:
         """Perform dry run execution with retry on failure.
 
         Args:
             validate_result (GeneratedResult): Validated code result
-            config_list (list[dict]): List of dry run configs
 
         Returns:
             tuple[GeneratedResult, float]: Final result after dry run and cost
@@ -670,28 +690,21 @@ class CodeValidationOrchestrator:
         validation_message_history: MESSAGE_HISTORY_TYPE = []
 
         for _ in range(self.max_retry):
-            all_error_messages = []
-            all_warning_messages = []
             # Save code for dry run
             save_generated_code(
-                f"{exp_const.GENERATED_CODE_DIRC}/{self.experiment.name}/{DRYRUN_CODE_PATH}",
+                f"{GENERATED_CODE_DIRC}/{self.experiment.name}/{DRYRUN_CODE_PATH}",
                 current_result.implement.code,
             )
 
-            for i, config in enumerate(config_list):
-                logger.info(f"Executing dry run {i + 1}/{len(config_list)}")
-                # Execute dry run
-                error_message, warning_messages = dry_run(
-                    experiment=self.experiment,
-                    config=config,
-                    config_path=self.dry_run_config_path,
-                )
-                if error_message and error_message.strip():
-                    all_error_messages.append(error_message)
+            # Execute dry run
+            error_message, warning_messages = dry_run(
+                model_type=self.context.model_type,
+                experiment=self.experiment,
+                config_path=self.dry_run_config_path,
+                generate_result=current_result,
+            )
 
-                all_warning_messages += warning_messages
-
-            if len(all_error_messages) == 0:
+            if error_message == "":
                 # Dry run successful
                 break
             else:
@@ -700,8 +713,8 @@ class CodeValidationOrchestrator:
                 re_generate_code_result, validation_message_history, cost = (
                     self._regenerate_code(
                         code=current_result.implement.code,
-                        error_messages=all_error_messages,
-                        warning_messages=all_warning_messages,
+                        error_messages=[error_message],
+                        warning_messages=warning_messages,
                         message_history=validation_message_history,
                     )
                 )
@@ -714,3 +727,52 @@ class CodeValidationOrchestrator:
                 )
 
         return current_result, validation_cost
+
+
+@traceable(tags=["validation", "code"])
+def validate_generated_code(
+    llm_client: ChatClient,
+    db_client: PineconeClient | None,
+    context: RunContext,
+    generate_result: GeneratedResult,
+    experiment: qxmt.Experiment,
+    dry_run_config_path: str,
+    max_retry: int = DEFAULT_MAX_RETRY,
+) -> tuple[GeneratedResult, float]:
+    """Validates generated code through multiple checks and retries if needed.
+
+    This function now delegates to CodeValidationOrchestrator for better organization.
+    The validation process includes:
+    1. Syntax validation using py_compile and ast
+    2. PennyLane documentation validation
+    3. Code uniqueness check against previous code
+    4. Dry run execution
+
+    If validation fails, the code is regenerated up to max_retry times.
+    The original idea and score are preserved throughout the process.
+
+    Args:
+        llm_client (ChatClient): Client for interacting with the language model
+        db_client (PineconeClient | None): Client for Pinecone database
+        context (RunContext): Context of the current run
+        generate_result (GeneratedResult): Generated code result to validate
+        experiment (qxmt.Experiment): QXMT experiment object for dry run
+        dry_run_config_path (str, optional): Path to dry run config.
+        max_retry (int, optional): Maximum number of retry attempts. Defaults to DEFAULT_MAX_RETRY.
+
+    Raises:
+        ValueError: If valid code cannot be generated after max_retry attempts
+
+    Returns:
+        tuple[GeneratedResult, float]: Validated code result and total validation cost
+    """
+    orchestrator = CodeValidationOrchestrator(
+        llm_client=llm_client,
+        db_client=db_client,
+        context=context,
+        experiment=experiment,
+        dry_run_config_path=dry_run_config_path,
+        max_retry=max_retry,
+    )
+
+    return orchestrator.validate_and_retry(generate_result)

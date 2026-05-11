@@ -1,0 +1,598 @@
+from typing import Optional
+
+from pydantic import BaseModel
+
+
+class BondLengthSettings(BaseModel):
+    min_bond_length: float
+    max_bond_length: float
+    sample_nums: int
+    equilibrium_bond_length: float
+
+
+class Structures(BaseModel):
+    charge: int
+    multi: int
+    active_electrons: int
+    active_orbitals: int
+
+
+class EnergyCache(BaseModel):
+    hf: Optional[float] = None
+    casci: Optional[float] = None
+    casscf: Optional[float] = None
+    fci: Optional[float] = None
+
+
+class TargetMolecule(BaseModel):
+    name: str
+    symbols: list[str]
+    n_qubits: int
+    structures: Structures
+    bond_length_settings: BondLengthSettings
+    exact_energy: str
+    energy_cache: dict[float, EnergyCache] | None = None
+
+
+TARGET_MOLECULES: dict[str, TargetMolecule] = {
+    "H2": TargetMolecule(
+        name="H2",
+        symbols=["H", "H"],
+        n_qubits=4,
+        structures=Structures(
+            charge=0,
+            multi=1,
+            active_electrons=2,
+            active_orbitals=2,
+        ),
+        bond_length_settings=BondLengthSettings(
+            min_bond_length=0.2,
+            max_bond_length=2.5,
+            sample_nums=10,
+            equilibrium_bond_length=0.741,
+        ),
+        exact_energy="fci_energy",
+        energy_cache={
+            0.2: EnergyCache(
+                hf=0.16417501206169538,
+                casci=0.15748213479836348,
+                casscf=0.15748213479836348,
+                fci=0.15748213479836348,
+            ),
+            0.4875: EnergyCache(
+                hf=-1.0312097366725492,
+                casci=-1.0430438122856938,
+                casscf=-1.0430438122856933,
+                fci=-1.0430438122856938,
+            ),
+            0.741: EnergyCache(
+                hf=-1.1167061372361056,
+                casci=-1.13727440552944,
+                casscf=-1.1372744055294397,
+                fci=-1.13727440552944,
+            ),
+            0.7749999999999999: EnergyCache(
+                hf=-1.1139396617430493,
+                casci=-1.136044363227914,
+                casscf=-1.1360443632279145,
+                fci=-1.1360443632279151,
+            ),
+            1.0625: EnergyCache(
+                hf=-1.0479308511128957,
+                casci=-1.0875772238951618,
+                casscf=-1.0875772238951622,
+                fci=-1.0875772238951618,
+            ),
+            1.3499999999999999: EnergyCache(
+                hf=-0.9572031750747299,
+                casci=-1.0250543624687884,
+                casscf=-1.0250543624687884,
+                fci=-1.0250543624687884,
+            ),
+            1.6375: EnergyCache(
+                hf=-0.871243928432584,
+                casci=-0.9786544104615412,
+                casscf=-0.9786544104615412,
+                fci=-0.9786544104615412,
+            ),
+            1.9249999999999998: EnergyCache(
+                hf=-0.7997638281473751,
+                casci=-0.9527614857390085,
+                casscf=-0.952761485739009,
+                fci=-0.9527614857390085,
+            ),
+            2.2125: EnergyCache(
+                hf=-0.7443032786252785,
+                casci=-0.9408947965825124,
+                casscf=-0.9408947965825124,
+                fci=-0.9408947965825124,
+            ),
+            2.5: EnergyCache(
+                hf=-0.7029435997235272,
+                casci=-0.9360549199556063,
+                casscf=-0.9360549199556065,
+                fci=-0.9360549199556063,
+            ),
+        },
+    ),
+    "H4": TargetMolecule(
+        name="H4",
+        symbols=["H", "H", "H", "H"],
+        n_qubits=8,
+        structures=Structures(
+            charge=0,
+            multi=1,
+            active_electrons=4,
+            active_orbitals=4,
+        ),
+        bond_length_settings=BondLengthSettings(
+            min_bond_length=0.5,
+            max_bond_length=2.0,
+            sample_nums=10,
+            equilibrium_bond_length=0.741,
+        ),
+        exact_energy="fci_energy",
+        energy_cache={
+            0.5: EnergyCache(
+                hf=-1.6286097030298983,
+                casci=-1.653116951940115,
+                casscf=-1.6531169519401185,
+                fci=-1.6531169519401159,
+            ),
+            0.6875: EnergyCache(
+                hf=-2.0575859100575355,
+                casci=-2.0944281711993016,
+                casscf=-2.0944281711993034,
+                fci=-2.0944281711993025,
+            ),
+            0.741: EnergyCache(
+                hf=-2.0984683717168258,
+                casci=-2.139541034166845,
+                casscf=-2.139541034166844,
+                fci=-2.139541034166845,
+            ),
+            0.875: EnergyCache(
+                hf=-2.1268320732012045,
+                casci=-2.180256204372885,
+                casscf=-2.180256204372884,
+                fci=-2.180256204372885,
+            ),
+            1.0625: EnergyCache(
+                hf=-2.0734153724474744,
+                casci=-2.14977471761068,
+                casscf=-2.14977471761068,
+                fci=-2.14977471761068,
+            ),
+            1.25: EnergyCache(
+                hf=-1.9757006727788247,
+                casci=-2.0839356356450702,
+                casscf=-2.0839356356450702,
+                fci=-2.0839356356450702,
+            ),
+            1.4375: EnergyCache(
+                hf=-1.8656714561072103,
+                casci=-2.0162696435947955,
+                casscf=-2.0162696435947964,
+                fci=-2.0162696435947938,
+            ),
+            1.625: EnergyCache(
+                hf=-1.758355574697228,
+                casci=-1.9611478253429317,
+                casscf=-1.9611478253429322,
+                fci=-1.9611478253429317,
+            ),
+            1.8125: EnergyCache(
+                hf=-1.6607320984079355,
+                casci=-1.9223272247766254,
+                casscf=-1.9223272247766259,
+                fci=-1.9223272247766272,
+            ),
+            2.0: EnergyCache(
+                hf=-1.575616476701866,
+                casci=-1.8977806459898732,
+                casscf=-1.8977806459898736,
+                fci=-1.8977806459898727,
+            ),
+        },
+    ),
+    "H6": TargetMolecule(
+        name="H6",
+        symbols=["H", "H", "H", "H", "H", "H"],
+        n_qubits=12,
+        structures=Structures(
+            charge=0,
+            multi=1,
+            active_electrons=6,
+            active_orbitals=6,
+        ),
+        bond_length_settings=BondLengthSettings(
+            min_bond_length=0.5,
+            max_bond_length=2.0,
+            sample_nums=10,
+            equilibrium_bond_length=0.741,
+        ),
+        exact_energy="fci_energy",
+        energy_cache={
+            0.5: EnergyCache(
+                hf=-2.186793419920649,
+                casci=-2.225106185924531,
+                casscf=-2.225106185924533,
+                fci=-2.2251061859245347,
+            ),
+            0.6875: EnergyCache(
+                hf=-2.9967276031932073,
+                casci=-3.0531999038323328,
+                casscf=-3.0531999038323274,
+                fci=-3.053199903832329,
+            ),
+            0.741: EnergyCache(
+                hf=-3.081170526028206,
+                casci=-3.1437117154767673,
+                casscf=-3.1437117154767673,
+                fci=-3.143711715476771,
+            ),
+            0.875: EnergyCache(
+                hf=-3.1601129062795854,
+                casci=-3.240183573237121,
+                casscf=-3.240183573237112,
+                fci=-3.240183573237121,
+            ),
+            1.0625: EnergyCache(
+                hf=-3.1034296312574856,
+                casci=-3.2161308878030237,
+                casscf=-3.216130887803031,
+                fci=-3.216130887803028,
+            ),
+            1.25: EnergyCache(
+                hf=-2.966201861429064,
+                casci=-3.1249867243226417,
+                casscf=-3.1249867243226435,
+                fci=-3.124986724322641,
+            ),
+            1.4375: EnergyCache(
+                hf=-2.804526244156788,
+                casci=-3.0255869427013353,
+                casscf=-3.0255869427013335,
+                fci=-3.025586942701337,
+            ),
+            1.625: EnergyCache(
+                hf=-2.6442044544003167,
+                casci=-2.94301533263497,
+                casscf=-2.9430153326349684,
+                fci=-2.9430153326349675,
+            ),
+            1.8125: EnergyCache(
+                hf=-2.4971769666158976,
+                casci=-2.8843856346924954,
+                casscf=-2.8843856346924928,
+                fci=-2.8843856346924954,
+            ),
+            2.0: EnergyCache(
+                hf=-2.368421284279992,
+                casci=-2.847192133955601,
+                casscf=-2.8471921339555992,
+                fci=-2.847192133955601,
+            ),
+        },
+    ),
+    "LiH": TargetMolecule(
+        name="LiH",
+        symbols=["Li", "H"],
+        n_qubits=10,
+        structures=Structures(
+            charge=0,
+            multi=1,
+            active_electrons=2,
+            active_orbitals=5,
+        ),
+        bond_length_settings=BondLengthSettings(
+            min_bond_length=1.0,
+            max_bond_length=4.0,
+            sample_nums=10,
+            equilibrium_bond_length=1.595,
+        ),
+        exact_energy="casci_energy",
+        energy_cache={
+            1.0: EnergyCache(
+                hf=-7.767362135748567,
+                casci=-7.784021320448165,
+                casscf=-7.78422451768467,
+                fci=-7.784460280031227,
+            ),
+            1.375: EnergyCache(
+                hf=-7.858999931666868,
+                casci=-7.87647420766348,
+                casscf=-7.876497126542593,
+                fci=-7.876698988596796,
+            ),
+            1.595: EnergyCache(
+                hf=-7.862023860127114,
+                casci=-7.882174505767283,
+                casscf=-7.882179014902088,
+                fci=-7.882401932290221,
+            ),
+            1.75: EnergyCache(
+                hf=-7.853839601840525,
+                casci=-7.876947173757284,
+                casscf=-7.876949036272908,
+                fci=-7.87718700230454,
+            ),
+            2.125: EnergyCache(
+                hf=-7.81687657225062,
+                casci=-7.851253228508678,
+                casscf=-7.851257382677981,
+                fci=-7.851521643637997,
+            ),
+            2.5: EnergyCache(
+                hf=-7.770873669221905,
+                casci=-7.823426939851902,
+                casscf=-7.82343944894172,
+                fci=-7.823723883467699,
+            ),
+            2.875: EnergyCache(
+                hf=-7.725128406463635,
+                casci=-7.803157039789441,
+                casscf=-7.803184532153905,
+                fci=-7.803486874244093,
+            ),
+            3.25: EnergyCache(
+                hf=-7.68437642306796,
+                casci=-7.79183387320776,
+                casscf=-7.7918738885253855,
+                fci=-7.792184472005136,
+            ),
+            3.625: EnergyCache(
+                hf=-7.650903566917616,
+                casci=-7.786392793044661,
+                casscf=-7.78643422180161,
+                fci=-7.786746035111284,
+            ),
+            4.0: EnergyCache(
+                hf=-7.62497563013133,
+                casci=-7.7839310199929805,
+                casscf=-7.783966801084706,
+                fci=-7.784278178715385,
+            ),
+        },
+    ),
+    "BeH2": TargetMolecule(
+        name="BeH2",
+        symbols=["Be", "H", "H"],
+        n_qubits=12,
+        structures=Structures(
+            charge=0,
+            multi=1,
+            active_electrons=4,
+            active_orbitals=6,
+        ),
+        bond_length_settings=BondLengthSettings(
+            min_bond_length=0.8,
+            max_bond_length=2.5,
+            sample_nums=10,
+            equilibrium_bond_length=1.326,
+        ),
+        exact_energy="casci_energy",
+        energy_cache={
+            0.8: EnergyCache(
+                hf=-15.10269300920082,
+                casci=-15.183485566250411,
+                casscf=-15.18366755735061,
+                fci=-15.183901887249338,
+            ),
+            1.0125: EnergyCache(
+                hf=-15.255377482078902,
+                casci=-15.353756707758151,
+                casscf=-15.353977920391973,
+                fci=-15.354115872122591,
+            ),
+            1.225: EnergyCache(
+                hf=-15.297904412221534,
+                casci=-15.419121118287602,
+                casscf=-15.419292961574191,
+                fci=-15.419463710989213,
+            ),
+            1.326: EnergyCache(
+                hf=-15.29632400790344,
+                casci=-15.427906955298907,
+                casscf=-15.428057358963454,
+                fci=-15.42824465605904,
+            ),
+            1.4375: EnergyCache(
+                hf=-15.284784000491042,
+                casci=-15.427615922571734,
+                casscf=-15.42774790674332,
+                fci=-15.427949239394879,
+            ),
+            1.65: EnergyCache(
+                hf=-15.24623785037286,
+                casci=-15.410725850298967,
+                casscf=-15.410836772462064,
+                fci=-15.411052864147536,
+            ),
+            1.8625: EnergyCache(
+                hf=-15.19849424639489,
+                casci=-15.385832191310847,
+                casscf=-15.385941778021348,
+                fci=-15.386156282913241,
+            ),
+            2.075: EnergyCache(
+                hf=-15.150595065462488,
+                casci=-15.362987750973314,
+                casscf=-15.363123325009873,
+                fci=-15.363312971400694,
+            ),
+            2.2875: EnergyCache(
+                hf=-15.107498073884821,
+                casci=-15.3477162830972,
+                casscf=-15.347907976202595,
+                fci=-15.348044649140244,
+            ),
+            2.5: EnergyCache(
+                hf=-15.071374305108977,
+                casci=-15.34031171466627,
+                casscf=-15.340561539224904,
+                fci=-15.340641608556508,
+            ),
+        },
+    ),
+    "H2O": TargetMolecule(
+        name="H2O",
+        symbols=["O", "H", "H"],
+        n_qubits=12,
+        structures=Structures(
+            charge=0,
+            multi=1,
+            active_electrons=8,
+            active_orbitals=6,
+        ),
+        bond_length_settings=BondLengthSettings(
+            min_bond_length=0.6,
+            max_bond_length=2.5,
+            sample_nums=10,
+            equilibrium_bond_length=0.957,
+        ),
+        exact_energy="casci_energy",
+        energy_cache={
+            0.6: EnergyCache(
+                hf=-74.12755679781506,
+                casci=-74.14607391940241,
+                casscf=-74.14609891171841,
+                fci=-74.14620410603037,
+            ),
+            0.8374999999999999: EnergyCache(
+                hf=-74.89759046743858,
+                casci=-74.93370852734226,
+                casscf=-74.93373672670208,
+                fci=-74.93380365725139,
+            ),
+            0.957: EnergyCache(
+                hf=-74.96290541582333,
+                casci=-75.01228046033225,
+                casscf=-75.01230987289951,
+                fci=-75.01235864503667,
+            ),
+            1.075: EnergyCache(
+                hf=-74.95031558350712,
+                casci=-75.01685156130233,
+                casscf=-75.01688159972636,
+                fci=-75.016916878822,
+            ),
+            1.3125: EnergyCache(
+                hf=-74.82823655314125,
+                casci=-74.94393714614102,
+                casscf=-74.94396612770309,
+                fci=-74.94398403581897,
+            ),
+            1.5499999999999998: EnergyCache(
+                hf=-74.67065595302265,
+                casci=-74.85634919054615,
+                casscf=-74.85637324988416,
+                fci=-74.8563816047986,
+            ),
+            1.7875: EnergyCache(
+                hf=-74.5186349048199,
+                casci=-74.79300912615452,
+                casscf=-74.79302539666168,
+                fci=-74.79302882600233,
+            ),
+            2.025: EnergyCache(
+                hf=-74.38814759744116,
+                casci=-74.75962169072966,
+                casscf=-74.75963055501687,
+                fci=-74.75855336824868,
+            ),
+            2.2624999999999997: EnergyCache(
+                hf=-74.28528080875263,
+                casci=-74.74583075170783,
+                casscf=-74.74583508181381,
+                fci=-74.74583552977364,
+            ),
+            2.5: EnergyCache(
+                hf=-74.27993450940826,
+                casci=-74.74059453326845,
+                casscf=-74.74059552913889,
+                fci=-74.73828380476283,
+            ),
+        },
+    ),
+    "N2": TargetMolecule(
+        name="N2",
+        symbols=["N", "N"],
+        n_qubits=12,
+        structures=Structures(
+            charge=0,
+            multi=1,
+            active_electrons=6,
+            active_orbitals=6,
+        ),
+        bond_length_settings=BondLengthSettings(
+            min_bond_length=0.8,
+            max_bond_length=2.5,
+            sample_nums=10,
+            equilibrium_bond_length=1.098,
+        ),
+        exact_energy="casci_energy",
+        energy_cache={
+            0.8: EnergyCache(
+                hf=-106.68080245664659,
+                casci=-106.71455073460795,
+                casscf=-106.75153627830879,
+                fci=-106.76630791562262,
+            ),
+            1.0125: EnergyCache(
+                hf=-107.43585234007536,
+                casci=-107.53972546159008,
+                casscf=-107.5531555553487,
+                fci=-107.56888054064511,
+            ),
+            1.098: EnergyCache(
+                hf=-107.49597503059053,
+                casci=-107.62201465586436,
+                casscf=-107.6371126105783,
+                fci=-107.65299987563179,
+            ),
+            1.225: EnergyCache(
+                hf=-107.4774119381665,
+                casci=-107.64309587740335,
+                casscf=-107.65983408741957,
+                fci=-107.67558224537042,
+            ),
+            1.4375: EnergyCache(
+                hf=-107.326422897122,
+                casci=-107.5761955086317,
+                casscf=-107.59384981487374,
+                fci=-107.60774196200464,
+            ),
+            1.65: EnergyCache(
+                hf=-107.14153214522463,
+                casci=-107.49685615276823,
+                casscf=-107.5149837109327,
+                fci=-107.52446327673545,
+            ),
+            1.8625: EnergyCache(
+                hf=-106.96904983481028,
+                casci=-107.44953028614492,
+                casscf=-107.46697050525707,
+                fci=-107.47176709218121,
+            ),
+            2.075: EnergyCache(
+                hf=-106.82356400782938,
+                casci=-107.43411102844345,
+                casscf=-107.44775521832592,
+                fci=-107.44994783277318,
+            ),
+            2.2875: EnergyCache(
+                hf=-106.70737844647397,
+                casci=-107.43281995973977,
+                casscf=-107.44185998533808,
+                fci=-107.44287320196128,
+            ),
+            2.5: EnergyCache(
+                hf=-106.616959082769,
+                casci=-107.43440342869695,
+                casscf=-107.43993635523003,
+                fci=-107.44041534491734,
+            ),
+        },
+    ),
+}

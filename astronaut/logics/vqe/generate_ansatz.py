@@ -1,74 +1,107 @@
-from __future__ import annotations
-
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from langsmith import traceable
 
-import astronaut.constants as exp_const
-import astronaut.logics.common as common_logics
-import astronaut.logics.common.experiments as exp_common
-import astronaut.params as params
-import astronaut.prompts.common as common_prompts
-import astronaut.prompts.vqe as vqe_prompts
-import astronaut.schema as base_schema
+from astronaut.db import PineconeClient
+from astronaut.llm import ChatClient
+from astronaut.logics.common import (
+    GenerateCode,
+    GenerateIdea,
+    PaperSummarizer,
+    ReflectIdea,
+    ScoringIdea,
+)
+from astronaut.logics.common.experiments import format_batch_results
+from astronaut.logics.common.expert import PaperExpert
+from astronaut.logics.common.reflection import (
+    DebateReflectionStrategy,
+    NoReflectionStrategy,
+    ReflectionStrategy,
+    SelfReflectionStrategy,
+    create_reflection_strategy,
+)
+from astronaut.logics.vqe.target_molecules import TARGET_MOLECULES
+from astronaut.params import (
+    ExpertParams,
+    GenerateCodeParams,
+    GenerateIdeaParams,
+    PaperSummarizationParams,
+    ReflectionParams,
+    ScoringParams,
+)
+from astronaut.prompts.common import (
+    DebateAdvocateIdeaPrompt,
+    DebateCriticIdeaPrompt,
+    SelfReflectionIdeaPrompt,
+)
+from astronaut.prompts.vqe import (
+    ANSATZ_CONSTRAINTS,
+    REFLECTION_EXPERTISE,
+    FeedbackBasedAnsatzIdeaPrompt,
+    GenerateAnsatzCodePrompt,
+)
+from astronaut.schema import (
+    MESSAGE_HISTORY_TYPE,
+    GeneratedIdea,
+    GeneratedIdeaResult,
+    GeneratedImplResult,
+    GeneratedResults,
+    MessageHistory,
+    RunContext,
+    ScoringResult,
+)
 
-if TYPE_CHECKING:
-    from astronaut.db import PineconeClient
-    from astronaut.llm import ChatClient
 
-
-@traceable(tags=exp_const.LANGSMITH_GENERATION_TAGS)
+@traceable(tags=["generation"])
 def generate_ansatz(
-    llm_client: "ChatClient",
-    arxiv_db_client: "PineconeClient" | None,
+    llm_client: ChatClient,
+    arxiv_db_client: PineconeClient | None,
     trial_num: int,
-    context: base_schema.RunContext,
-    dataset_configs: dict[str, Any],
-) -> tuple[base_schema.GeneratedResults, base_schema.MessageHistory, float]:
+    context: RunContext,
+) -> tuple[GeneratedResults, MessageHistory, float]:
     generate_cost = 0.0
 
     # Generate feature map idea
-    target_molecule_names = list(dataset_configs.keys())
     first_generated_idea, idea_message_history, cost = generate_ansatz_ideas(
-        llm_client, trial_num, context, target_molecule_names
+        llm_client, trial_num, context
     )
     generate_cost += cost
 
     # Initialize instances for scoring, summarization, expert and reflection
-    idea_scorer = common_logics.ScoringIdea(
+    idea_scorer = ScoringIdea(
         llm_client=llm_client,
         paper_db_client=arxiv_db_client,
         model_version=context.model_versions.scoring,
-        reasoning_effort=params.ScoringParams().reasoning_effort,
-        verbosity=params.ScoringParams().verbosity,
+        reasoning_effort=ScoringParams().reasoning_effort,
+        verbosity=ScoringParams().verbosity,
     )
-    paper_summarizer = common_logics.PaperSummarizer(
+    paper_summarizer = PaperSummarizer(
         client=llm_client,
         model_version=context.model_versions.summary,
         local_paper_dir=context.local_paper_dir,
-        reasoning_effort=params.PaperSummarizationParams().reasoning_effort,
-        verbosity=params.PaperSummarizationParams().verbosity,
+        reasoning_effort=PaperSummarizationParams().reasoning_effort,
+        verbosity=PaperSummarizationParams().verbosity,
     )
     if arxiv_db_client is not None:
-        expert_model = common_logics.PaperExpert(
+        expert_model = PaperExpert(
             llm_client=llm_client,
             paper_db_client=arxiv_db_client,
             model_version=context.model_versions.expert,
             local_paper_dir=context.local_paper_dir,
-            reasoning_effort=params.ExpertParams().reasoning_effort,
-            verbosity=params.ExpertParams().verbosity,
+            reasoning_effort=ExpertParams().reasoning_effort,
+            verbosity=ExpertParams().verbosity,
         )
     else:
         expert_model = None
 
-    reflector = common_logics.ReflectIdea(
+    reflector = ReflectIdea(
         llm_client=llm_client,
         model_version=context.model_versions.reflection,
         paper_db_client=arxiv_db_client,
         paper_summarizer=paper_summarizer,
         expert_model=expert_model,
-        reasoning_effort=params.ReflectionParams().reasoning_effort,
-        verbosity=params.ReflectionParams().verbosity,
+        reasoning_effort=ReflectionParams().reasoning_effort,
+        verbosity=ReflectionParams().verbosity,
     )
 
     finalized_ideas = []
@@ -85,7 +118,7 @@ def generate_ansatz(
         generate_cost += cost
 
         # Reflect the generated idea using strategy pattern
-        reflection_strategy = common_logics.create_reflection_strategy(
+        reflection_strategy = create_reflection_strategy(
             reflector, context.reflection_config
         )
         final_idea, cost = reflect_ansatz_idea_with_strategy(
@@ -124,14 +157,14 @@ def generate_ansatz(
     generate_cost += cost
 
     # Update the message history
-    updated_message_history = base_schema.MessageHistory(
+    updated_message_history = MessageHistory(
         review=context.message_history.review,
         idea=idea_message_history,
         code=code_message_history,
     )
 
     # Format the result
-    finalized_results = exp_common.format_batch_results(
+    finalized_results = format_batch_results(
         finalized_ideas, finalized_scores, generate_code_result.results
     )
 
@@ -139,27 +172,23 @@ def generate_ansatz(
 
 
 def generate_ansatz_ideas(
-    llm_client: ChatClient,
-    trial_num: int,
-    context: base_schema.RunContext,
-    target_molecule_names: list[str],
-) -> tuple[
-    base_schema.GeneratedIdeaResult, base_schema.MESSAGE_HISTORY_TYPE, float
-]:
+    llm_client: ChatClient, trial_num: int, context: RunContext
+) -> tuple[GeneratedIdeaResult, MESSAGE_HISTORY_TYPE, float]:
     """
     Generate ansatz ideas using the LLM client and context.
     Only first trial uses deep thinking.
 
     Returns: (GeneratedIdeaResult, MESSAGE_HISTORY_TYPE, cost)
     """
-    idea_generator = common_logics.GenerateIdea(
+    idea_generator = GenerateIdea(
         client=llm_client,
         model_version=context.model_versions.idea,
-        reasoning_effort=params.GenerateIdeaParams().reasoning_effort,
-        verbosity=params.GenerateIdeaParams().verbosity,
+        reasoning_effort=GenerateIdeaParams().reasoning_effort,
+        verbosity=GenerateIdeaParams().verbosity,
     )
-    developer_prompt, user_prompt = vqe_prompts.FeedbackBasedAnsatzIdeaPrompt(
-        target_molecule_names=", ".join(target_molecule_names)
+    target_molecule_names = ", ".join(TARGET_MOLECULES.keys())
+    developer_prompt, user_prompt = FeedbackBasedAnsatzIdeaPrompt(
+        target_molecule_names=target_molecule_names
     ).build(
         current_trial_num=trial_num,
         max_trial_num=context.max_trial_num,
@@ -177,43 +206,43 @@ def generate_ansatz_ideas(
 
 
 def create_reflection_prompt_builders(
-    strategy: common_logics.ReflectionStrategy,
+    strategy: ReflectionStrategy,
 ) -> tuple[Any, Any]:
     """Create appropriate prompt builders based on strategy type."""
 
-    if isinstance(strategy, common_logics.SelfReflectionStrategy):
+    if isinstance(strategy, SelfReflectionStrategy):
 
         def advocate_builder(
             **kwargs: Any,
         ) -> tuple[dict[str, str], dict[str, str]]:
-            return common_prompts.SelfReflectionIdeaPrompt(
-                expertise=vqe_prompts.REFLECTION_EXPERTISE,
-                constraints=vqe_prompts.ANSATZ_CONSTRAINTS,
+            return SelfReflectionIdeaPrompt(
+                expertise=REFLECTION_EXPERTISE,
+                constraints=ANSATZ_CONSTRAINTS,
             ).build(**kwargs)
 
         return advocate_builder, None
 
-    elif isinstance(strategy, common_logics.DebateReflectionStrategy):
+    elif isinstance(strategy, DebateReflectionStrategy):
 
         def advocate_builder(
             **kwargs: Any,
         ) -> tuple[dict[str, str], dict[str, str]]:
-            return common_prompts.DebateAdvocateIdeaPrompt(
-                expertise=vqe_prompts.REFLECTION_EXPERTISE,
-                constraints=vqe_prompts.ANSATZ_CONSTRAINTS,
+            return DebateAdvocateIdeaPrompt(
+                expertise=REFLECTION_EXPERTISE,
+                constraints=ANSATZ_CONSTRAINTS,
             ).build(**kwargs)
 
         def critic_builder(
             **kwargs: Any,
         ) -> tuple[dict[str, str], dict[str, str]]:
-            return common_prompts.DebateCriticIdeaPrompt(
-                expertise=vqe_prompts.REFLECTION_EXPERTISE,
-                constraints=vqe_prompts.ANSATZ_CONSTRAINTS,
+            return DebateCriticIdeaPrompt(
+                expertise=REFLECTION_EXPERTISE,
+                constraints=ANSATZ_CONSTRAINTS,
             ).build(**kwargs)
 
         return advocate_builder, critic_builder
 
-    elif isinstance(strategy, common_logics.NoReflectionStrategy):
+    elif isinstance(strategy, NoReflectionStrategy):
 
         def dummy_builder(
             **kwargs: Any,
@@ -227,12 +256,12 @@ def create_reflection_prompt_builders(
 
 
 def reflect_ansatz_idea_with_strategy(
-    reflector: common_logics.ReflectIdea,
-    strategy: common_logics.ReflectionStrategy,
-    context: base_schema.RunContext,
-    idea: base_schema.GeneratedIdea,
-    idea_score: base_schema.ScoringResult,
-) -> tuple[base_schema.GeneratedIdea, float]:
+    reflector: ReflectIdea,
+    strategy: ReflectionStrategy,
+    context: RunContext,
+    idea: GeneratedIdea,
+    idea_score: ScoringResult,
+) -> tuple[GeneratedIdea, float]:
     """
     Reflect the generated idea using the specified strategy.
     Returns: (final_idea, cost)
@@ -259,12 +288,10 @@ def generate_ansatz_codes(
     code_model_version: str,
     reference_model_version: str,
     last_code: str,
-    finalized_ideas: list[base_schema.GeneratedIdea],
-    message_history: base_schema.MESSAGE_HISTORY_TYPE,
-    n_code_history: int | None,
-) -> tuple[
-    base_schema.GeneratedImplResult, base_schema.MESSAGE_HISTORY_TYPE, float
-]:
+    finalized_ideas: list[GeneratedIdea],
+    message_history,
+    n_code_history,
+) -> tuple["GeneratedImplResult", MESSAGE_HISTORY_TYPE, float]:
     """
     Generate ansatz codes for the finalized ideas.
     Returns: (GeneratedImplResult, code_message_history, cost)
@@ -272,30 +299,28 @@ def generate_ansatz_codes(
 
     def code_prompt_builder(
         last_code: str,
-        idea_result: base_schema.GeneratedIdea,
+        idea_result: GeneratedIdea,
         pennylane_reference: str,
     ) -> tuple[dict[str, str], dict[str, str]]:
-        prompt = vqe_prompts.GenerateAnsatzCodePrompt(
+        prompt = GenerateAnsatzCodePrompt(
             code=last_code,
             idea=idea_result.get_string_for_code_generation(),
             pennylane_reference=pennylane_reference,
         )
         return prompt.build()
 
-    code_generator = common_logics.GenerateCode(
+    code_generator = GenerateCode(
         client=llm_client,
         code_model_version=code_model_version,
         reference_model_version=reference_model_version,
-        reasoning_effort=params.GenerateCodeParams().reasoning_effort,
-        verbosity=params.GenerateCodeParams().verbosity,
+        reasoning_effort=GenerateCodeParams().reasoning_effort,
+        verbosity=GenerateCodeParams().verbosity,
     )
     generate_code_result, code_message_history, cost = (
         code_generator.generate_codes(
             prompt_builder_fn=code_prompt_builder,
             last_code=last_code,
-            finalized_idea=base_schema.GeneratedIdeaResult(
-                results=finalized_ideas
-            ),
+            finalized_idea=GeneratedIdeaResult(results=finalized_ideas),
             message_history=message_history,
             n_code_history=n_code_history,
         )

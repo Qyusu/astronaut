@@ -1,49 +1,81 @@
-from __future__ import annotations
-
-import copy
 import traceback
-from functools import partial
-from typing import TYPE_CHECKING, Any, cast
+from typing import cast
 
 import pandas as pd
 import qxmt
 import yaml
 from langsmith import traceable
 from loguru import logger
+from qxmt.experiment.schema import VQERunTime
+from qxmt.models.vqe import BaseVQE
 
-import astronaut.constants as exp_const
-import astronaut.logics.common as common_logics
-import astronaut.logics.common.experiments as exp_common
-import astronaut.logics.vqe.constants as vqe_const
-import astronaut.logics.vqe.schema as vqe_schema
-import astronaut.logics.vqe.utils as vqe_utils
-import astronaut.prompts.vqe as vqe_prompts
-import astronaut.schema as base_schema
+from astronaut.constants import (
+    BASE_CONFIG_PATH,
+    DRYRUN_CONFIG_PATH,
+    GENERATED_MODULE_ROOT,
+    MODEL_TYPE_PLACEHOLDER,
+    RESEARCH_REPORT_FILE_NAME,
+    VQE_MODEL_TYPE,
+)
+from astronaut.db import PineconeClient
+from astronaut.llm import ChatClient
+from astronaut.logics.common import (
+    CodeValidationOrchestrator,
+    GenerateIdea,
+    Researcher,
+    ReviewMetric,
+)
+from astronaut.logics.common.experiments import (
+    BaseExperimentRunner,
+    BaseIdeaProcessor,
+    ExperimentDependencies,
+    format_batch_results,
+    get_best_idea_abstract,
+    get_best_result_id,
+    initialize_run_context_base,
+    update_run_context,
+    update_score_histories,
+)
+from astronaut.logics.common.experiments import (
+    ExperimentReviewer as BaseExperimentReviewer,
+)
+from astronaut.logics.vqe import cost_function, generate_ansatz
 from astronaut.logics.vqe.ansatz_scalability import AnsatzScalabilityDetector
-from astronaut.logics.vqe.cost_function import cost_function
+from astronaut.logics.vqe.cost_function import MultiCostAggregator
 from astronaut.logics.vqe.feedback import FeedbackFormatter, FeedbackFormatType
-from astronaut.logics.vqe.generate_ansatz import (
-    generate_ansatz,
-    generate_ansatz_codes,
-)
-from astronaut.logics.vqe.molecule_configs import (
+from astronaut.logics.vqe.generate_ansatz import generate_ansatz_codes
+from astronaut.logics.vqe.target_molecules import (
+    TARGET_MOLECULES,
     TargetMolecule,
-    get_molecule_config_from_qubits,
+)
+from astronaut.logics.vqe.utils import (
+    get_bond_lengths,
+    get_coordinates,
+    get_n_qubits_from_config,
+)
+from astronaut.params import GenerateIdeaParams
+from astronaut.prompts.vqe import (
+    RESEARCHER_USER_PROMPT,
+    FilteringAnsatzIdeaPrompt,
+    ResearchBasedAnsatzIdeaPrompt,
+    ReviewIdeaPrompt,
+)
+from astronaut.schema import (
+    GeneratedIdea,
+    GeneratedIdeaResult,
+    GeneratedResult,
+    GeneratedResults,
+    MessageHistory,
+    ReflectionType,
+    ResearchMode,
+    RunContext,
 )
 
-if TYPE_CHECKING:
-    from qxmt.experiment.schema import VQEEvaluations, VQERunTime
-    from qxmt.models.vqe import BaseVQE
-
-    from astronaut.db import PineconeClient
-    from astronaut.llm import ChatClient
-    from astronaut.schema import GeneratedResult, GeneratedResults
-
-VQE_BASE_CONFIG_PATH = exp_const.BASE_CONFIG_PATH.replace(
-    exp_const.TASK_TYPE_PLACEHOLDER, exp_const.VQE_MODEL_TYPE
+VQE_BASE_CONFIG_PATH = BASE_CONFIG_PATH.replace(
+    MODEL_TYPE_PLACEHOLDER, VQE_MODEL_TYPE
 )
-VQE_DRYRUN_CONFIG_PATH = exp_const.DRYRUN_CONFIG_PATH.replace(
-    exp_const.TASK_TYPE_PLACEHOLDER, exp_const.VQE_MODEL_TYPE
+VQE_DRYRUN_CONFIG_PATH = DRYRUN_CONFIG_PATH.replace(
+    MODEL_TYPE_PLACEHOLDER, VQE_MODEL_TYPE
 )
 
 
@@ -53,12 +85,12 @@ def initialize_run_context(
     max_idea_num: int,
     max_suggestion_num: int,
     max_scoring_round: int,
-    reflection_type: base_schema.ReflectionType,
+    reflection_type: ReflectionType,
     max_reflection_round: int,
     seed_code: str,
-) -> base_schema.RunContext:
+) -> RunContext:
     """Initialize run context specific to VQE experiments."""
-    base_context = exp_common.initialize_run_context_base(
+    base_context = initialize_run_context_base(
         experiment,
         max_trial_num,
         max_idea_num,
@@ -69,26 +101,32 @@ def initialize_run_context(
         seed_code,
     )
 
-    return base_schema.RunContext(**base_context)
+    return RunContext(
+        model_type=VQE_MODEL_TYPE,
+        n_qubits=get_n_qubits_from_config(VQE_BASE_CONFIG_PATH),
+        **base_context,
+    )
 
 
-def get_best_result_id_vqe(result_df: pd.DataFrame, id_col: str) -> str:
+def get_best_result_id_vqe(
+    result_df: pd.DataFrame, id_col: str = "idea_id"
+) -> str:
     """Get best result ID for VQE experiments (minimize aggregated cost)."""
-    return exp_common.get_best_result_id(
-        result_df, vqe_const.AGGREGATED_COST_COL, id_col, minimize=True
+    return get_best_result_id(
+        result_df, "aggregated_cost", id_col, minimize=True
     )
 
 
 def gen_dummy_aggregated_result_series(idea_id: str) -> pd.Series:
     return pd.Series(
-        vqe_schema.VQEAggregatedResult(
-            idea_id=idea_id,
-            num_gates_order="unknown",
-            num_params_order="unknown",
-            aggregated_num_iter=0,
-            aggregated_run_time=0.0,
-            aggregated_cost=float("inf"),
-        ).model_dump()
+        {
+            "idea_id": idea_id,
+            "num_gates_order": "unknown",
+            "num_params_order": "unknown",
+            "aggregated_num_iter": 0,
+            "aggregated_run_time": 0.0,
+            "aggregated_cost": float("inf"),
+        }
     )
 
 
@@ -96,27 +134,23 @@ class SingleIdeaExperimentRunner:
     """Handles bond length experiment execution for a single idea."""
 
     def __init__(
-        self,
-        experiment: qxmt.Experiment,
-        context: base_schema.RunContext,
-        dataset_configs: dict[str, Any],
+        self, experiment: qxmt.Experiment, context: RunContext
     ) -> None:
         self.experiment = experiment
         self.context = context
-        self.dataset_configs = dataset_configs
 
     def run_experiments_by_multiple_molecules(
         self,
+        molecules_settings: dict[str, TargetMolecule],
         validated_result: GeneratedResult,
         idea_id: str,
-        base_config_path: str,
+        base_config_path: str = VQE_BASE_CONFIG_PATH,
     ) -> pd.DataFrame:
         molecules_result_df = pd.DataFrame()
-        for mol_name, config_dict in self.dataset_configs.items():
+        for molecule_settings in molecules_settings.values():
             logger.info(
-                f"[idea_id={idea_id}, molecule={mol_name}] Run Experiment by QXMT..."
+                f"[idea_id={idea_id}, molecule={molecule_settings.name}] Run Experiment by QXMT..."
             )
-            molecule_settings = TargetMolecule(**config_dict)
             molecule_result_df = self._run_experiments_by_bond_length(
                 validated_result,
                 idea_id,
@@ -138,7 +172,7 @@ class SingleIdeaExperimentRunner:
     ) -> pd.DataFrame:
         """Run experiments across multiple bond lengths for a validated result."""
         bond_length_settings = molecule_settings.bond_length_settings
-        bond_lengths = vqe_utils.get_bond_lengths(
+        bond_lengths = get_bond_lengths(
             min_bond_length=bond_length_settings.min_bond_length,
             max_bond_length=bond_length_settings.max_bond_length,
             sample_nums=bond_length_settings.sample_nums,
@@ -188,37 +222,29 @@ class SingleIdeaExperimentRunner:
         )
 
         artifact, _ = self.experiment.run(config_source=config_path, n_jobs=1)
-        vqe_model = cast("BaseVQE", artifact.model)
+        vqe_model = cast(BaseVQE, artifact.model)
         optimized_params = self._get_optimized_params(vqe_model)
         eval_result_df = self.experiment.runs_to_dataframe(
             include_validation=False
         )
-        run_time = cast("VQERunTime", self.experiment.exp_db.runs[-1].runtime)  # type: ignore
+        run_time = cast(VQERunTime, self.experiment.exp_db.runs[-1].runtime)  # type: ignore
         num_iter = len(vqe_model.cost_history)
 
-        result = vqe_schema.VQEExperimentResult(
-            **eval_result_df.iloc[-1].to_dict(),
-            idea_id=idea_id,
-            molecule_name=molecule_settings.name,
-            num_iter=num_iter,
-            run_time=run_time.optimize_seconds,
-            bond_length=bond_length,
-            cost=cost_function(
-                final_energy=eval_result_df.iloc[-1][
-                    vqe_const.QXMT_FINAL_COST_COL
-                ],
-                exact_energy=eval_result_df.iloc[-1][
-                    molecule_settings.exact_energy
-                ],
-            ),
+        bond_length_series = eval_result_df.iloc[-1].copy()
+        bond_length_series["idea_id"] = idea_id
+        bond_length_series["molecule_name"] = molecule_settings.name
+        bond_length_series["num_iter"] = num_iter
+        bond_length_series["run_time"] = run_time.optimize_seconds
+        bond_length_series["bond_length"] = bond_length
+        bond_length_series["cost"] = cost_function(
+            final_energy=bond_length_series["final_cost"],
+            exact_energy=bond_length_series[molecule_settings.exact_energy],
         )
-        bond_length_series = pd.Series(result.model_dump())
 
         return bond_length_series, optimized_params
 
-    def _get_optimized_params(self, vqe_model: "BaseVQE") -> list[float]:
-        params = vqe_model.params_history[-1]
-        return params.flatten().tolist()
+    def _get_optimized_params(self, vqe_model: BaseVQE) -> list[float]:
+        return vqe_model.params_history[-1].tolist()
 
     def _update_config(
         self,
@@ -233,63 +259,78 @@ class SingleIdeaExperimentRunner:
         init_params: list[float] | None = None,
     ) -> str:
         config = yaml.safe_load(open(base_config_path))
-        config[vqe_const.QXMT_CONFIG_KEY_DESCRIPTION] = summary
+        config["description"] = summary
 
-        vqe_utils.update_config_for_molecule(
-            config, molecule_settings, bond_length
+        config["hamiltonian"]["params"]["symbols"] = molecule_settings.symbols
+        config["hamiltonian"]["params"]["coordinates"] = get_coordinates(
+            molecule_settings.name, bond_length
+        )
+        config["hamiltonian"]["params"]["charge"] = (
+            molecule_settings.structures.charge
+        )
+        config["hamiltonian"]["params"]["multi"] = (
+            molecule_settings.structures.multi
+        )
+        config["hamiltonian"]["params"]["active_electrons"] = (
+            molecule_settings.structures.active_electrons
+        )
+        config["hamiltonian"]["params"]["active_orbitals"] = (
+            molecule_settings.structures.active_orbitals
         )
 
-        config[vqe_const.QXMT_CONFIG_KEY_ANSATZ][
-            vqe_const.QXMT_CONFIG_KEY_MODULE_NAME
-        ] = f"{exp_const.GENERATED_MODULE_ROOT}.{experiment_name}.{vqe_const.CODE_FILE_PREFIX}_{module_suffix}"
-        config[vqe_const.QXMT_CONFIG_KEY_ANSATZ][
-            vqe_const.QXMT_CONFIG_KEY_IMPLEMENT_NAME
-        ] = ansatz_name
+        energy_cache = molecule_settings.energy_cache
+        if energy_cache is not None and bond_length in energy_cache:
+            config["hamiltonian"]["params"]["hf_energy"] = energy_cache[
+                bond_length
+            ].hf
+            config["hamiltonian"]["params"]["casci_energy"] = energy_cache[
+                bond_length
+            ].casci
+            config["hamiltonian"]["params"]["casscf_energy"] = energy_cache[
+                bond_length
+            ].casscf
+            config["hamiltonian"]["params"]["fci_energy"] = energy_cache[
+                bond_length
+            ].fci
+
+        config["device"]["n_qubits"] = molecule_settings.n_qubits
+
+        config["ansatz"]["module_name"] = (
+            f"{GENERATED_MODULE_ROOT}.{experiment_name}.ansatz_{module_suffix}"
+        )
+        config["ansatz"]["implement_name"] = ansatz_name
 
         if init_params is not None:
-            config[vqe_const.QXMT_CONFIG_KEY_MODEL][
-                vqe_const.QXMT_CONFIG_KEY_PARAMS
-            ][vqe_const.QXMT_CONFIG_KEY_INIT_PARAMS] = {
-                vqe_const.INIT_PARAMS_TYPE: vqe_const.INIT_PARAMS_TYPE_CUSTOM,
-                vqe_const.INIT_PARAMS_VALUES: init_params,
+            config["model"]["params"]["init_params"] = {
+                "type": "custom",
+                "values": init_params,
             }
 
-        config_path = (
-            f"{config_dirc}/{vqe_const.CONFIG_FILE_PREFIX}_{module_suffix}.yaml"
-        )
+        config_path = f"{config_dirc}/config_{module_suffix}.yaml"
         with open(config_path, "w") as file:
             yaml.dump(config, file)
 
         return config_path
 
 
-class IdeaProcessor(exp_common.BaseIdeaProcessor):
+class IdeaProcessor(BaseIdeaProcessor):
     """Handles processing of individual ideas including validation and experiment execution."""
 
     def __init__(
-        self,
-        dependencies: exp_common.ExperimentDependencies,
-        context: base_schema.RunContext,
-        dataset_configs: dict[str, Any],
-        validation_qubits: list[int],
+        self, dependencies: ExperimentDependencies, context: RunContext
     ) -> None:
         super().__init__(
             dependencies=dependencies,
             context=context,
             dry_run_config_path=VQE_DRYRUN_CONFIG_PATH,
-            code_file_prefix=vqe_const.CODE_FILE_PREFIX,
+            code_file_prefix="ansatz",
         )
-        self.target_dataset_names = list(dataset_configs.keys())
-        self.dataset_configs = {
-            name: TargetMolecule(**config)
-            for name, config in dataset_configs.items()
-        }
-        self.validation_qubits = validation_qubits
         self.single_idea_experiment_runner = SingleIdeaExperimentRunner(
-            dependencies.experiment, context, dataset_configs
+            dependencies.experiment, context
         )
 
-        self.validation_orchestrator = common_logics.CodeValidationOrchestrator(
+        # Initialize validation orchestrator for reuse across idea processing
+        self.validation_orchestrator = CodeValidationOrchestrator(
             llm_client=dependencies.llm_client,
             db_client=dependencies.qml_db_client,
             context=context,
@@ -298,100 +339,55 @@ class IdeaProcessor(exp_common.BaseIdeaProcessor):
         )
 
         self.code_module_dirc = (
-            f"{exp_const.GENERATED_MODULE_ROOT}.{dependencies.experiment.name}"
+            f"{GENERATED_MODULE_ROOT}.{dependencies.experiment.name}"
         )
 
-    def _build_dry_run_config_list(self, implement_name: str) -> list[dict]:
-        """Build dry run config list for multiple qubit settings."""
-        base_config = self._load_dry_run_base_config(implement_name)
-        min_mol_config = self._get_min_qubit_molecule()
-        qubits_list = self.validation_qubits
-        if not qubits_list:
-            qubits_list = [min_mol_config.n_qubits]
+    def process_idea(
+        self, result: GeneratedResult, idea_id: str
+    ) -> tuple[GeneratedResult, pd.Series, pd.DataFrame, float]:
+        """Process a single idea through validation and experiment execution with VQE-specific pattern."""
 
-        return [
-            self._create_dry_run_config_for_qubits(
-                base_config, qubits, min_mol_config
-            )
-            for qubits in qubits_list
-        ]
-
-    def _load_dry_run_base_config(self, implement_name: str) -> dict[str, Any]:
-        """Load and prepare the base configuration for dry runs."""
-        with open(self.dry_run_config_path, "r") as f:
-            base_config = yaml.safe_load(f)
-
-        base_config[vqe_const.QXMT_CONFIG_KEY_ANSATZ][
-            vqe_const.QXMT_CONFIG_KEY_MODULE_NAME
-        ] = f"{exp_const.GENERATED_MODULE_ROOT}.{self.deps.experiment.name}.{vqe_const.DRYRUN_FILE_PREFIX}"
-        base_config[vqe_const.QXMT_CONFIG_KEY_ANSATZ][
-            vqe_const.QXMT_CONFIG_KEY_IMPLEMENT_NAME
-        ] = implement_name
-        return base_config
-
-    def _get_min_qubit_molecule(self) -> TargetMolecule:
-        """Get the molecule configuration with the minimum number of qubits."""
-        return min(self.dataset_configs.values(), key=lambda x: x.n_qubits)
-
-    def _create_dry_run_config_for_qubits(
-        self,
-        base_config: dict[str, Any],
-        qubits: int,
-        fallback_mol_config: TargetMolecule,
-    ) -> dict[str, Any]:
-        """Create a dry run configuration for a specific number of qubits."""
-        cfg = copy.deepcopy(base_config)
-        mol_config = get_molecule_config_from_qubits(
-            qubits, self.dataset_configs
-        )
-
-        if mol_config is None:
-            # Use fallback (min qubit molecule) if no matching config found
-            mol_config = fallback_mol_config.model_copy(
-                update={"n_qubits": qubits}
+        try:
+            # Use common validation and save logic
+            validated_result, validation_cost = (
+                self._common_validation_and_save(result, idea_id)
             )
 
-        vqe_utils.update_config_for_molecule(
-            cfg,
-            mol_config,
-            mol_config.bond_length_settings.equilibrium_bond_length,
-        )
-        return cfg
+            # VQE-specific: Run single idea experiment across multiple bond lengths
+            single_idea_result_df = self.single_idea_experiment_runner.run_experiments_by_multiple_molecules(
+                TARGET_MOLECULES,
+                validated_result,
+                idea_id,
+                VQE_BASE_CONFIG_PATH,
+            )
 
-    def _run_experiments(
-        self, validated_result: GeneratedResult, idea_id: str
-    ) -> pd.DataFrame:
-        """Run experiments for the validated result."""
-        return self.single_idea_experiment_runner.run_experiments_by_multiple_molecules(
-            validated_result,
-            idea_id,
-            VQE_BASE_CONFIG_PATH,
-        )
+            # store ansatz spec and execution statistics
+            num_gates_order, num_params_order = self._detect_ansatz_scalability(
+                module_path=f"{self.code_module_dirc}.ansatz_{idea_id}",
+                ansatz_name=validated_result.implement.class_name,
+            )
+            aggregated_series = self._aggregate_single_idea_result(
+                idea_id,
+                single_idea_result_df,
+                num_gates_order,
+                num_params_order,
+            )
 
-    def _aggregate_results(
-        self,
-        idea_id: str,
-        raw_result_df: pd.DataFrame,
-        validated_result: GeneratedResult,
-    ) -> pd.Series:
-        """Aggregate experiment results."""
-        num_gates_order, num_params_order = self._detect_ansatz_scalability(
-            module_path=f"{self.code_module_dirc}.{vqe_const.CODE_FILE_PREFIX}_{idea_id}",
-            ansatz_name=validated_result.implement.class_name,
-        )
-        return self._aggregate_single_idea_result(
-            idea_id,
-            raw_result_df,
-            num_gates_order,
-            num_params_order,
-        )
+            return (
+                validated_result,
+                aggregated_series,
+                single_idea_result_df,
+                validation_cost,
+            )
 
-    def _create_dummy_result(
-        self, idea_id: str
-    ) -> tuple[pd.Series, pd.DataFrame]:
-        """Create dummy results in case of failure."""
-        aggregated_series = gen_dummy_aggregated_result_series(idea_id)
-        return aggregated_series, pd.DataFrame()
+        except Exception as e:
+            logger.debug(traceback.format_exc())
+            logger.error(f"Error occurred in processing idea {idea_id}: {e}")
+            validated_result = GeneratedResult(
+                idea=result.idea, score=result.score, implement=result.implement
+            )
+            aggregated_series = gen_dummy_aggregated_result_series(idea_id)
+            return validated_result, aggregated_series, pd.DataFrame(), 0.0
 
     def _detect_ansatz_scalability(
         self, module_path: str, ansatz_name: str
@@ -409,34 +405,279 @@ class IdeaProcessor(exp_common.BaseIdeaProcessor):
         num_gates_order: str,
         num_params_order: str,
     ) -> pd.Series:
-        aggregation_source = vqe_schema.VQEAggregatedResult.aggregation_source()
-        aggregated_values = {
-            agg_field: float(single_idea_result_df[source_field].mean())
-            for agg_field, source_field in aggregation_source.items()
-        }
-
+        aggregator = MultiCostAggregator(single_idea_result_df)
         return pd.Series(
-            vqe_schema.VQEAggregatedResult(
-                idea_id=idea_id,
-                num_gates_order=num_gates_order,
-                num_params_order=num_params_order,
-                **aggregated_values,
-            ).model_dump()
+            {
+                "idea_id": idea_id,
+                "num_gates_order": num_gates_order,
+                "num_params_order": num_params_order,
+                "aggregated_num_iter": aggregator.aggregate(
+                    aggregate_method="mean", cost_col="num_iter"
+                ),
+                "aggregated_run_time": aggregator.aggregate(
+                    aggregate_method="mean", cost_col="run_time"
+                ),
+                "aggregated_cost": aggregator.aggregate(
+                    aggregate_method="mean", cost_col="cost"
+                ),
+            }
         )
 
 
-class ExperimentReviewer(exp_common.ExperimentReviewer):
+class FilteringExecutor:
+    def __init__(
+        self,
+        dependencies: ExperimentDependencies,
+        context: RunContext,
+        filtering_steps: list[int],
+    ) -> None:
+        self.deps = dependencies
+        self.context = context
+        self.filtering_steps = filtering_steps
+        if len(self.filtering_steps) < 2:
+            raise ValueError(
+                "Filtering steps must be a list of at least two integers."
+            )
+
+        self.idea_processor = IdeaProcessor(dependencies, context)
+
+        self.idea_generator = GenerateIdea(
+            client=self.deps.llm_client,
+            model_version=self.context.model_versions.filtering,
+            reasoning_effort=GenerateIdeaParams().reasoning_effort,
+            verbosity=GenerateIdeaParams().verbosity,
+        )
+
+    @traceable(tags=["filtering"])
+    def execute_idea_filtering(
+        self, research_report: str
+    ) -> tuple[GeneratedIdeaResult, str, float]:
+        total_cost = 0.0
+
+        ideas, cost = self._generate_seed_ideas_from_research_report(
+            research_report, seed_idea_num=self.filtering_steps[0]
+        )
+        total_cost += cost
+
+        experiment_report, cost = self._make_experiment_report(
+            ideas.results, id_prefix="seed"
+        )
+        total_cost += cost
+
+        for filtering_num in self.filtering_steps[1:]:
+            ideas, cost = self._filtering_ideas(
+                experiment_report, filtering_num
+            )
+            total_cost += cost
+
+            current_report, cost = self._make_experiment_report(
+                ideas.results, id_prefix=f"filtering_step_{filtering_num}"
+            )
+            experiment_report += current_report
+            total_cost += cost
+
+        return ideas, experiment_report, total_cost
+
+    def _generate_seed_ideas_from_research_report(
+        self, research_report: str, seed_idea_num: int
+    ) -> tuple[GeneratedIdeaResult, float]:
+        developer_prompt, user_prompt = ResearchBasedAnsatzIdeaPrompt().build(
+            idea_num=seed_idea_num,
+            research_report=research_report,
+        )
+
+        logger.info("Generating seed ideas from research report...")
+        logger.debug(
+            f"Developer prompt: {developer_prompt}, User prompt: {user_prompt}"
+        )
+
+        generated_seed_ideas, _, cost = self.idea_generator.generate(
+            developer_prompt=developer_prompt,
+            user_prompt=user_prompt,
+            message_history=[],
+            n_history=None,
+        )
+
+        logger.info(
+            "Generating seed ideas is done and result is parsed as JSON."
+        )
+
+        return generated_seed_ideas, cost
+
+    def _filtering_ideas(
+        self, experiment_report: str, filtering_num: int
+    ) -> tuple[GeneratedIdeaResult, float]:
+        developer_prompt, user_prompt = FilteringAnsatzIdeaPrompt().build(
+            idea_num=filtering_num,
+            experiment_report=experiment_report,
+        )
+
+        logger.info("Filtering ideas...")
+        logger.debug(
+            f"Developer prompt: {developer_prompt}, User prompt: {user_prompt}"
+        )
+
+        filtered_ideas, _, cost = self.idea_generator.generate(
+            developer_prompt=developer_prompt,
+            user_prompt=user_prompt,
+            message_history=[],
+            n_history=None,
+        )
+
+        logger.info("Filtering ideas is done and result is parsed as JSON.")
+
+        return filtered_ideas, cost
+
+    def _make_experiment_report(
+        self, ideas: list[GeneratedIdea], id_prefix: str
+    ) -> tuple[str, float]:
+        total_cost = 0.0
+
+        generated_codes, _, cost = generate_ansatz_codes(
+            llm_client=self.deps.llm_client,
+            code_model_version=self.context.model_versions.code,
+            reference_model_version=self.context.model_versions.reference,
+            last_code=self.context.last_code,
+            finalized_ideas=ideas,
+            message_history=[],
+            n_code_history=None,
+        )
+        total_cost += cost
+
+        formatted_results = format_batch_results(
+            ideas,
+            [None for _ in ideas],
+            generated_codes.results,
+        )
+
+        aggregated_result_df = pd.DataFrame()
+        raw_result_df = pd.DataFrame()
+        validated_result_list: list[GeneratedResult] = []
+        for i, result in enumerate(formatted_results.results, start=1):
+            idea_id = f"{id_prefix}_{i}"
+            (
+                validated_result,
+                single_idea_aggregated_result_series,
+                single_idea_result_df,
+                cost,
+            ) = self.idea_processor.process_idea(result, idea_id)
+
+            total_cost += cost
+
+            validated_result_list.append(validated_result)
+            aggregated_result_df = pd.concat(
+                [
+                    aggregated_result_df,
+                    single_idea_aggregated_result_series.to_frame().T,
+                ],
+                axis=0,
+            ).reset_index(drop=True)
+            raw_result_df = pd.concat(
+                [raw_result_df, single_idea_result_df], axis=0
+            ).reset_index(drop=True)
+
+        logger.info(f"Fitering Result: {aggregated_result_df}")
+        experiment_report = (
+            f"------- {id_prefix} -------\n"
+            + FeedbackFormatter(
+                FeedbackFormatType.RAW_TEXT,
+                GeneratedResults(results=validated_result_list),
+                aggregated_result_df,
+                raw_result_df,
+            ).format()
+        )
+
+        return experiment_report, total_cost
+
+
+class TrialExecutor:
+    """Handles execution of a single trial including idea generation and processing."""
+
+    def __init__(
+        self, dependencies: ExperimentDependencies, context: RunContext
+    ) -> None:
+        self.deps = dependencies
+        self.context = context
+        self.idea_processor = IdeaProcessor(dependencies, context)
+
+    def execute_trial(
+        self, trial_num: int
+    ) -> tuple[GeneratedResults, pd.DataFrame, pd.DataFrame, float, RunContext]:
+        """Execute a single trial including idea generation and processing."""
+        iter_cost = 0.0
+
+        # Generate ansatz idea and code
+        generated_idea_code, updated_message_history, cost = generate_ansatz(
+            llm_client=self.deps.llm_client,
+            arxiv_db_client=self.deps.arxiv_db_client,
+            trial_num=trial_num,
+            context=self.context,
+        )
+
+        # Update context with message history from ansatz generation
+        # coding history is reset to empty list at each trial
+        self.context = update_run_context(
+            self.context,
+            message_history=MessageHistory(
+                review=updated_message_history.review,
+                idea=updated_message_history.idea,
+                code=[],
+            ),
+        )
+        iter_cost += cost
+
+        trial_result_df = pd.DataFrame()
+        all_idea_result_df = pd.DataFrame()
+        validated_result_list: list[GeneratedResult] = []
+
+        # Process each generated idea
+        for i, result in enumerate(generated_idea_code.results, start=1):
+            idea_id = f"{trial_num}_{i}"
+            (
+                validated_result,
+                single_idea_aggregated_result_series,
+                single_idea_result_df,
+                validation_cost,
+            ) = self.idea_processor.process_idea(result, idea_id)
+            iter_cost += validation_cost
+
+            validated_result_list.append(validated_result)
+            trial_result_df = pd.concat(
+                [
+                    trial_result_df,
+                    single_idea_aggregated_result_series.to_frame().T,
+                ],
+                axis=0,
+            ).reset_index(drop=True)
+            all_idea_result_df = pd.concat(
+                [all_idea_result_df, single_idea_result_df], axis=0
+            ).reset_index(drop=True)
+
+        validated_results = GeneratedResults(results=validated_result_list)
+        return (
+            validated_results,
+            trial_result_df,
+            all_idea_result_df,
+            iter_cost,
+            self.context,
+        )
+
+    def update_context(self, context: RunContext) -> None:
+        """Update the context for this trial executor."""
+        self.context = context
+        self.idea_processor.update_context(context)
+
+
+class ExperimentReviewer(BaseExperimentReviewer):
     """Handles idea review functionality."""
 
     def __init__(
         self,
-        dependencies: exp_common.ExperimentDependencies,
-        context: base_schema.RunContext,
-        review_metric: common_logics.ReviewMetric,
-        target_molecule_names_str: str,
+        dependencies: ExperimentDependencies,
+        context: RunContext,
+        review_metric: ReviewMetric,
     ) -> None:
         super().__init__(dependencies, context, review_metric)
-        self.target_molecule_names_str = target_molecule_names_str
 
     def _review_prompt_builder_fn(
         self,
@@ -446,8 +687,9 @@ class ExperimentReviewer(exp_common.ExperimentReviewer):
         performance_review: str | None,
     ) -> tuple[dict[str, str], dict[str, str]]:
         """Create VQE specific review prompts."""
-        return vqe_prompts.ReviewIdeaPrompt(
-            target_molecule_names=self.target_molecule_names_str,
+        target_molecule_names = ", ".join(TARGET_MOLECULES.keys())
+        return ReviewIdeaPrompt(
+            target_molecule_names=target_molecule_names,
             max_suggestion_num=max_suggestion_num,
         ).build(
             last_trial_num=last_trial_num,
@@ -456,26 +698,20 @@ class ExperimentReviewer(exp_common.ExperimentReviewer):
         )
 
 
-class VQEExperimentRunner(exp_common.BaseExperimentRunner):
+class VQEExperimentRunner(BaseExperimentRunner):
     """Main orchestrator for VQE experiments."""
 
     def __init__(
         self,
-        dependencies: exp_common.ExperimentDependencies,
-        dataset_configs: dict[str, Any],
-        validation_qubits: list[int],
-        review_metric: common_logics.ReviewMetric,
-        feedback_format_type: FeedbackFormatType,
+        dependencies: ExperimentDependencies,
+        feedback_format_type: FeedbackFormatType = FeedbackFormatType.RAW_TEXT,
+        review_metric: ReviewMetric = ReviewMetric.AGGREGATED_COST,
     ) -> None:
         super().__init__(dependencies)
-        self.dataset_configs = dataset_configs
-        self.validation_qubits = validation_qubits
         self.reviewer: ExperimentReviewer | None = None
-        self.trial_executor: exp_common.TrialExecutor | None = None
-        self.review_metric = review_metric
+        self.trial_executor: TrialExecutor | None = None
         self.feedback_format_type = feedback_format_type
-        # Initialize idea processor placeholder, actual initialization in initialize()
-        self.idea_processor: IdeaProcessor | None = None
+        self.review_metric = review_metric
 
     def initialize(
         self,
@@ -483,7 +719,7 @@ class VQEExperimentRunner(exp_common.BaseExperimentRunner):
         max_idea_num: int,
         max_suggestion_num: int,
         max_scoring_round: int,
-        reflection_type: base_schema.ReflectionType,
+        reflection_type: ReflectionType,
         max_reflection_round: int,
         seed_code: str,
     ) -> None:
@@ -498,33 +734,16 @@ class VQEExperimentRunner(exp_common.BaseExperimentRunner):
             max_reflection_round,
             seed_code,
         )
-        self.reviewer = ExperimentReviewer(
-            self.deps,
-            self.context,
-            review_metric=self.review_metric,
-            target_molecule_names_str=", ".join(
-                list(self.dataset_configs.keys())
-            ),
-        )
-        self.idea_processor = IdeaProcessor(
-            self.deps,
-            self.context,
-            self.dataset_configs,
-            self.validation_qubits,
-        )
-        self.trial_executor = exp_common.TrialExecutor(
-            dependencies=self.deps,
-            context=self.context,
-            idea_processor=self.idea_processor,
-            idea_generator_fn=partial(
-                generate_ansatz, dataset_configs=self.dataset_configs
-            ),
-        )
 
-    def expanding_idea(
+        self.reviewer = ExperimentReviewer(
+            self.deps, self.context, review_metric=self.review_metric
+        )
+        self.trial_executor = TrialExecutor(self.deps, self.context)
+
+    def filtering_idea(
         self,
-        research_mode: base_schema.ResearchMode,
-        expanding_steps: list[int],
+        research_mode: ResearchMode,
+        filtering_steps: list[int],
         existing_research_report_path: str | None = None,
     ) -> None:
         if not self.context:
@@ -532,45 +751,35 @@ class VQEExperimentRunner(exp_common.BaseExperimentRunner):
                 "Context not initialized. Call initialize() first."
             )
 
+        if research_mode == ResearchMode.NONE:
+            raise ValueError(
+                'Idea filtering needs to specify research mode from "deep" or "light".'
+            )
+
         # generate research report
         if existing_research_report_path is None:
-            research_report, research_cost = common_logics.Researcher(
+            research_report, research_cost = Researcher(
                 client=self.deps.llm_client, research_mode=research_mode
             ).research(
-                user_prompt=vqe_prompts.RESEARCHER_USER_PROMPT,
-                save_report_path=f"{self.context.gen_code_dirc}/{exp_const.RESEARCH_REPORT_FILE_NAME}",
+                user_prompt=RESEARCHER_USER_PROMPT,
+                save_report_path=f"{self.context.gen_code_dirc}/{RESEARCH_REPORT_FILE_NAME}",
             )
         else:
-            research_report, research_cost = (
-                common_logics.Researcher.load_existing_report(
-                    existing_research_report_path
-                )
+            research_report, research_cost = Researcher.load_existing_report(
+                existing_research_report_path
             )
 
         # generate multiple ideas from research report
-        expanding_executor = exp_common.ExpandingExecutor(
-            dependencies=self.deps,
-            context=self.context,
-            expanding_steps=expanding_steps,
-            idea_processor=self.idea_processor,
-            research_based_prompt_factory=lambda n,
-            r: vqe_prompts.ResearchBasedAnsatzIdeaPrompt().build(n, r),
-            expanding_prompt_factory=lambda n,
-            r: vqe_prompts.ExpandingAnsatzIdeaPrompt().build(n, r),
-            code_generator_fn=generate_ansatz_codes,
-            feedback_formatter_fn=lambda r, agg, raw: FeedbackFormatter(
-                FeedbackFormatType.RAW_TEXT, r, agg, raw
-            ).format(),
-            seed_phase_id_prefix=vqe_const.SEED_PHASE_ID_PREFIX,
-            expanding_phase_id_prefix=vqe_const.EXPANDING_PHASE_ID_PREFIX,
+        filtering_executor = FilteringExecutor(
+            self.deps, self.context, filtering_steps
         )
-        _, experiment_report, expanding_cost = (
-            expanding_executor.execute_idea_expanding(research_report)
+        _, experiment_report, filtering_cost = (
+            filtering_executor.execute_idea_filtering(research_report)
         )
 
-        self.context = exp_common.update_run_context(
+        self.context = update_run_context(
             self.context,
-            total_cost=self.context.total_cost + research_cost + expanding_cost,
+            total_cost=self.context.total_cost + research_cost + filtering_cost,
             last_trial_results=experiment_report,
             need_idea_review=True,
         )
@@ -618,27 +827,18 @@ class VQEExperimentRunner(exp_common.BaseExperimentRunner):
                 )
 
                 self._log_trial_completion(
-                    trial_num,
-                    total_iter_cost,
-                    all_idea_result_df,
-                    best_result_df,
+                    trial_num, total_iter_cost, best_result_df
                 )
 
         except Exception as e:
             logger.debug(traceback.format_exc())
             logger.error(f"Error occurred: {e}")
         finally:
-            self._log_experiment_completion(all_idea_result_df, best_result_df)
+            self._log_experiment_completion(best_result_df)
 
     def _execute_trial(
         self, trial_num: int
-    ) -> tuple[
-        base_schema.RunContext,
-        float,
-        GeneratedResults,
-        pd.DataFrame,
-        pd.DataFrame,
-    ]:
+    ) -> tuple[RunContext, float, GeneratedResults, pd.DataFrame, pd.DataFrame]:
         """Execute a single trial with VQE-specific pattern."""
         if not self.context or not self.trial_executor:
             raise ValueError("Components not initialized")
@@ -675,23 +875,26 @@ class VQEExperimentRunner(exp_common.BaseExperimentRunner):
             raise ValueError("Context not initialized")
 
         # Get best result from trial
-        best_result_id = get_best_result_id_vqe(
-            trial_result_df, vqe_const.IDEA_ID_COL
-        )
+        best_result_id = get_best_result_id_vqe(trial_result_df)
         updated_best_result_df = cast(
             pd.DataFrame,
             pd.concat(
                 [
                     best_result_df,
                     trial_result_df[
-                        trial_result_df[vqe_const.IDEA_ID_COL] == best_result_id
+                        trial_result_df["idea_id"] == best_result_id
                     ],
                 ],
                 ignore_index=True,
             ),
         )
 
-        self.context = exp_common.update_run_context(
+        best_result = validated_results.results[
+            int(best_result_id.split("_")[-1]) - 1
+        ]
+
+        # Update context
+        self.context = update_run_context(
             self.context,
             last_trial_results=FeedbackFormatter(
                 self.feedback_format_type,
@@ -699,82 +902,44 @@ class VQEExperimentRunner(exp_common.BaseExperimentRunner):
                 trial_result_df,
                 all_idea_result_df,
             ).format(),
-            score_histories=exp_common.update_score_histories(
+            score_histories=update_score_histories(
                 self.context.score_histories, validated_results
             ),
             need_idea_review=True,
+            best_idea_abstract=get_best_idea_abstract(best_result),
             total_cost=self.context.total_cost + iter_cost,
             eval_result_df=updated_best_result_df,
         )
 
+        # Sync updated context to all components
         self._sync_context_to_components()
 
         return updated_best_result_df
 
 
-def run_baseline(
-    experiment: qxmt.Experiment, dataset_configs: dict[str, Any]
-) -> None:
-    """Run baseline experiment."""
-
-    def config_updater_fn(
-        config: dict[str, Any], molecule_settings_dict: Any
-    ) -> None:
-        if isinstance(molecule_settings_dict, dict):
-            molecule_settings = TargetMolecule(**molecule_settings_dict)
-        else:
-            molecule_settings = molecule_settings_dict
-
-        vqe_utils.update_config_for_molecule(
-            config,
-            molecule_settings,
-            molecule_settings.bond_length_settings.equilibrium_bond_length,
-        )
-
-    def log_result_fn(target_name: str, baseline_result: Any) -> None:
-        baseline_evaluations = cast(
-            "VQEEvaluations", baseline_result.evaluations
-        )
-        logger.info(
-            f"""
-                Base Score [{target_name}]:
-                    {baseline_evaluations}
-                """
-        )
-
-    exp_common.BaselineExecutor(
-        experiment=experiment,
-        dataset_configs=dataset_configs,
-        config_updater_fn=config_updater_fn,
-        log_result_fn=log_result_fn,
-    ).execute(config_source=VQE_BASE_CONFIG_PATH)
-
-
-@traceable(tags=exp_const.LANGSMITH_EXPERIMENT_TAGS)
+@traceable(tags=["experiment"])
 def run(
     llm_client: ChatClient,
     arxiv_db_client: PineconeClient | None,
     qml_db_client: PineconeClient | None,
     seed_code: str,
     experiment: qxmt.Experiment,
-    dataset_configs: dict[str, Any],
-    validation_qubits: list[int],
     max_trial_num: int,
     max_idea_num: int,
     max_suggestion_num: int,
-    expanding_steps: list[int],
-    research_mode: base_schema.ResearchMode,
-    reflection_type: base_schema.ReflectionType,
+    filtering_steps: list[int],
+    research_mode: ResearchMode,
+    reflection_type: ReflectionType,
     max_reflection_round: int,
     max_scoring_round: int,
-    review_metric: common_logics.ReviewMetric,
     feedback_format_type: FeedbackFormatType = FeedbackFormatType.RAW_TEXT,
+    review_metric: ReviewMetric = ReviewMetric.AGGREGATED_COST,
     existing_research_report_path: str | None = None,
 ) -> None:
     """Runs the quantum variational ansatz generation and evaluation experiment.
 
     This function orchestrates the entire experiment process, including:
-    1. Ansatz idea research and expanding
+    1. Ansatz idea research and filtering
     2. Ansatz idea generation and review
     3. Code generation and validation
     4. Experiment execution and evaluation
@@ -792,24 +957,22 @@ def run(
         qml_db_client (PineconeClient | None): Client for accessing Pennylane documentation database
         seed_code (str): Initial code to start the experiment
         experiment (qxmt.Experiment): QXMT experiment object for execution
-        target_dataset_names (list[str]): List of target molecule names for evaluation
-        validation_qubits (list[int]): List of qubit numbers for validation
         max_trial_num (int): Maximum number of trials to run
         max_idea_num (int): Maximum number of ideas to generate per trial
         max_suggestion_num (int): Maximum number of improvement suggestions per review
-        expanding_steps (list[int]): Number of ideas for each steps of expanding
+        filtering_steps (list[int]): Number of ideas for each steps of filtering
         research_mode (ResearchMode): Mode for initial idea research
         reflection_type (ReflectionType): Type of reflection to use
         max_reflection_round (int): Maximum number of reflection rounds per idea
         max_scoring_round (int): Maximum number of scoring rounds per idea
-        review_metric (ReviewMetric): Metric to use for review
         feedback_format_type (FeedbackFormatType): Type of feedback format to use
+        review_metric (ReviewMetric): Metric to use for review
         existing_research_report_path (str | None): Path to existing research report markdown file
 
     Returns:
         None: Results are logged and saved during execution
     """
-    dependencies = exp_common.ExperimentDependencies(
+    dependencies = ExperimentDependencies(
         llm_client=llm_client,
         arxiv_db_client=arxiv_db_client,
         qml_db_client=qml_db_client,
@@ -818,10 +981,8 @@ def run(
 
     runner = VQEExperimentRunner(
         dependencies,
-        dataset_configs=dataset_configs,
-        validation_qubits=validation_qubits,
-        review_metric=review_metric,
         feedback_format_type=feedback_format_type,
+        review_metric=review_metric,
     )
     runner.initialize(
         max_trial_num=max_trial_num,
@@ -834,11 +995,11 @@ def run(
     )
 
     if (
-        research_mode != base_schema.ResearchMode.NONE
+        research_mode != ResearchMode.NONE
         or existing_research_report_path is not None
     ):
-        runner.expanding_idea(
-            research_mode, expanding_steps, existing_research_report_path
+        runner.filtering_idea(
+            research_mode, filtering_steps, existing_research_report_path
         )
 
     runner.run_trials()

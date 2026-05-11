@@ -7,7 +7,6 @@ from pytest_mock import MockFixture
 
 from astronaut.llm.config import AnthropicConfig
 from astronaut.llm.providers.anthropic import AnthropicChatClient
-from astronaut.schema import MessageHistory
 
 
 @pytest.fixture
@@ -22,7 +21,7 @@ def anthropic_chat_client() -> AnthropicChatClient:
     """Fixture for initializing the AnthropicChatClient with a config."""
     config = AnthropicConfig(
         api_key="test_api_key",
-        default_model_version="claude-sonnet-4-5",
+        default_model_version="claude-3-opus-20240229",
         thinking_model_max_tokens=64000,
         basic_model_max_tokens=8192,
         max_thinking_budget_tokens=20000,
@@ -38,15 +37,15 @@ def mock_sleep(mocker: MockFixture) -> None:
 
 @pytest.fixture
 def mock_parse_client(mocker: MockFixture) -> Any:
-    """Fixture for mocking parse_chat."""
-    mock_client = mocker.patch("astronaut.llm.providers.anthropic.parse_chat")
+    """Fixture for mocking parse_client."""
+    mock_client = mocker.patch("astronaut.llm.providers.anthropic.parse_client")
     yield mock_client
 
 
 def test_construct_message(anthropic_chat_client: AnthropicChatClient) -> None:
     """Test message construction for Anthropic models."""
     user_prompt = {"content": "Hello"}
-    message_history: MessageHistory = []
+    message_history = []
 
     messages = anthropic_chat_client._construct_message(
         user_prompt, message_history
@@ -63,7 +62,7 @@ def test_construct_message(anthropic_chat_client: AnthropicChatClient) -> None:
 def test_update_history(anthropic_chat_client: AnthropicChatClient) -> None:
     """Test updating message history."""
     user_prompt = {"content": "Hello"}
-    message_history: MessageHistory = []
+    message_history = []
     content = "Hi there!"
 
     updated_history = anthropic_chat_client._update_history(
@@ -83,16 +82,16 @@ def test_get_model_name_from_version(
 ) -> None:
     """Test extracting base model name from version string."""
     model_name = anthropic_chat_client._get_model_name_from_version(
-        "claude-sonnet-4-5-20240229"
+        "claude-3-opus-20240229"
     )
-    assert model_name == "claude-sonnet-4-5"
+    assert model_name == "claude-3-opus"
 
 
 def test_get_token_count(anthropic_chat_client: AnthropicChatClient) -> None:
     """Test token count calculation for different usage scenarios."""
     mock_message = Message(
         id="test-id",
-        model="claude-sonnet-4-5",
+        model="claude-3-opus",
         role="assistant",
         type="message",
         content=[TextBlock(type="text", text="Test response")],
@@ -115,7 +114,7 @@ def test_parse_response(
     """Test parsing response from Anthropic completion."""
     mock_message = Message(
         id="test-id",
-        model="claude-sonnet-4-5",
+        model="claude-3-opus",
         role="assistant",
         type="message",
         content=[TextBlock(type="text", text="Test response")],
@@ -127,9 +126,7 @@ def test_parse_response(
         mock_message, response_format=None
     )
     assert response == "Test response"
-    mock_parse_client.parse_chat.assert_called_once_with(
-        raw_content="Test response", response_format=None
-    )
+    mock_parse_client.parse_chat.assert_called_once()
 
 
 @pytest.mark.parametrize("mocker", [pytest_mock.mocker], indirect=True)
@@ -145,7 +142,7 @@ def test_parse_chat(
     )
     mock_message = Message(
         id="test-id",
-        model="claude-sonnet-4-5",
+        model="claude-3-opus",
         role="assistant",
         type="message",
         content=[TextBlock(type="text", text="Test response")],
@@ -182,7 +179,7 @@ def test_parse_chat_thinking_model(
     )
     mock_message = Message(
         id="test-id",
-        model="claude-sonnet-4-5",
+        model="claude-3-opus",
         role="assistant",
         type="message",
         content=[TextBlock(type="text", text="Test response")],
@@ -196,7 +193,7 @@ def test_parse_chat_thinking_model(
     response, history, cost = anthropic_chat_client.parse_chat(
         developer_prompt=developer_prompt,
         user_prompt=user_prompt,
-        model_version="claude-sonnet-4-5",
+        model_version="claude-3-opus-20240229",
         max_thinking_tokens=20000,
     )
 
